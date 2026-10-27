@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inner Weather Garden - Scan</title>
+<style>
+/* The Xgrids scan with the same two-number weather as index.html (heat, cold). Separate file because Spark needs three r180+ (ES modules). */
+:root {
+  --ink: #f2f5f6;
+  --ink-dim: rgba(242, 245, 246, .76);
+  --glass: rgba(20, 27, 32, .5);
+  --glass-line: rgba(255, 255, 255, .2);
+  --ember: #f08a4b;
+  --ice: #a9cdf0;
+  --ui: 'Helvetica Neue', Arial, system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; background: #e7ddc9; overflow: hidden; font-family: var(--ui); color: var(--ink); }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.warm, .frost { position: fixed; inset: 0; pointer-events: none; opacity: 0; }
+.warm { background: radial-gradient(120% 90% at 50% 45%, rgba(255, 150, 70, 0) 30%, rgba(255, 120, 40, .34) 80%, rgba(255, 86, 24, .52) 100%); }
+.frost { background: radial-gradient(120% 95% at 50% 50%, rgba(220, 236, 255, 0) 48%, rgba(214, 232, 255, .3) 100%); box-shadow: inset 0 0 150px rgba(210, 230, 255, .38); }
+
+.ui { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 16px; box-sizing: border-box; pointer-events: none; }
+.panel { background: var(--glass); border: 1px solid var(--glass-line); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.brand { padding: 12px 16px; border-radius: 14px; max-width: 360px; }
+.brand h1 { margin: 0; font-size: 22px; font-weight: 400; }
+.brand p { margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: var(--ink-dim); }
+.seg { display: flex; gap: 2px; padding: 4px; border-radius: 999px; }
+button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
+.seg button { border: 0; background: transparent; color: var(--ink); padding: 8px 15px; border-radius: 999px; font-size: 13px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .92); color: #182126; }
+.bottom { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.seq { padding: 14px 16px; border-radius: 16px; width: min(420px, 100%); box-sizing: border-box; pointer-events: auto; }
+.row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.go { border: 0; background: var(--ember); color: #24140a; padding: 10px 18px; border-radius: 999px; font-size: 14px; font-weight: 600; }
+.go[data-running="true"] { background: rgba(255, 255, 255, .92); color: #182126; }
+.phase { flex: 1; min-width: 130px; font-size: 14px; font-weight: 600; }
+.clock { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.track { position: relative; height: 6px; margin-top: 12px; border-radius: 99px; background: rgba(255, 255, 255, .18); overflow: hidden; }
+.track i { position: absolute; inset: 0; background: linear-gradient(90deg, var(--ember), #f3c58b 35%, var(--ice) 62%, #dff0ff); clip-path: inset(0 100% 0 0); }
+.body { margin-top: 14px; font-size: 12px; color: var(--ink-dim); }
+.body label { display: flex; justify-content: space-between; margin-bottom: 4px; }
+.body input[type=range] { width: 100%; pointer-events: auto; }
+.status { padding: 7px 12px; border-radius: 999px; font-size: 12px; color: var(--ink-dim); }
+#vr { position: static !important; }
+@media (max-width: 520px) { .status { display: none; } }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div class="frost" id="frost"></div>
+<div class="warm" id="warm"></div>
+
+<main class="ui">
+  <header class="top">
+    <div class="brand panel">
+      <h1>Inner Weather Garden</h1>
+      <p>The garden follows how the body feels. Design exploration on the Xgrids scan of the China Garden.</p>
+    </div>
+    <div class="seg panel" role="group" aria-label="Garden state">
+      <button type="button" data-mode="calm" aria-pressed="true">Calm</button>
+      <button type="button" data-mode="heat" aria-pressed="false">Heat</button>
+      <button type="button" data-mode="winter" aria-pressed="false">Winter</button>
+    </div>
+  </header>
+  <footer class="bottom">
+    <div class="seq panel">
+      <div class="row">
+        <button type="button" class="go" id="go" data-running="false">Start a hot flash</button>
+        <div class="phase" id="phase">90 second sequence</div>
+        <time class="clock" id="clock">0:00 / 1:30</time>
+      </div>
+      <div class="track" aria-hidden="true"><i id="fill"></i></div>
+      <div class="body">
+        <label for="skin"><span>Simulated skin temperature (a slider, not a sensor)</span><b id="skinVal">33.0 °C</b></label>
+        <input type="range" id="skin" min="32" max="38" step="0.1" value="33">
+        <div>Above 36 °C the garden starts the sequence by itself.</div>
+      </div>
+    </div>
+    <div class="status panel" id="status">Loading scan...</div>
+    <div id="vrSlot"></div>
+  </footer>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), statusEl = $('status');
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.xr.enabled = true;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xe7ddc9);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
+// The camera lives inside a rig so that, in VR, the rig decides where in the garden you stand.
+const rig = new THREE.Group();
+rig.add(camera);
+scene.add(rig);
+
+// Spark draws every SplatMesh in the scene during the normal render call.
+const spark = new SparkRenderer({ renderer });
+scene.add(spark);
+
+/* ---------- the scan ---------- */
+// The scan is z-up (measured from the file); three.js is y-up. -90 degrees around x turns z into up.
+// After the turn, the garden centre (about x -25, y -13, z 0 in scan units) sits at about (-25, 0, 13).
+const GARDEN = new THREE.Vector3(-25, 0, 13);
+const scan = new SplatMesh({ url: 'assets/china-garden-lod6.ply' });
+scan.rotation.x = -Math.PI / 2;
+scene.add(scan);
+scan.initialized
+  .then(() => { statusEl.textContent = 'Drag to look around, scroll to zoom'; })
+  .catch((err) => { statusEl.textContent = 'Could not load the scan: ' + err.message; });
+
+/* ---------- desktop camera ---------- */
+const DESK_POS = new THREE.Vector3(GARDEN.x, 26, GARDEN.z + 36);
+camera.position.copy(DESK_POS);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(GARDEN.x, 1, GARDEN.z);
+controls.enableDamping = true;
+controls.update();
+
+/* ---------- VR ---------- */
+const vrBtn = VRButton.createButton(renderer);
+$('vrSlot').appendChild(vrBtn);
+// The web buttons are not visible inside the headset, so entering VR starts the 90 second sequence by itself.
+renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(GARDEN); rig.position.y = 0; if (!seq) startSequence(); });
+renderer.xr.addEventListener('sessionend', () => { controls.enabled = true; rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update(); setMode('calm'); });
+
+/* ---------- snow: plain points that fall around the garden ---------- */
+const SNOW_N = 2500, BOX = { x0: -50, x1: 2, z0: -12, z1: 38, h: 16 };
+const snowPos = new Float32Array(SNOW_N * 3), snowSeed = new Float32Array(SNOW_N);
+for (let i = 0; i < SNOW_N; i++) {
+  snowPos[i * 3] = lerp(BOX.x0, BOX.x1, Math.random());
+  snowPos[i * 3 + 1] = Math.random() * BOX.h;
+  snowPos[i * 3 + 2] = lerp(BOX.z0, BOX.z1, Math.random());
+  snowSeed[i] = Math.random();
+}
+const flake = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
+})();
+const snowGeo = new THREE.BufferGeometry();
+snowGeo.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+snowGeo.setDrawRange(0, 0);
+const snow = new THREE.Points(snowGeo, new THREE.PointsMaterial({ map: flake, size: 0.22, transparent: true, depthWrite: false, opacity: 0.9 }));
+snow.frustumCulled = false;
+scene.add(snow);
+
+/* ---------- state: two numbers, heat and cold, 0 to 1 ---------- */
+const state = { h: 0, c: 0 };
+const TINT = [new THREE.Color(1, 1, 1), new THREE.Color(1.14, 0.88, 0.66), new THREE.Color(0.8, 0.93, 1.16)];   // calm, heat, winter
+const SKY = ['#e7ddc9', '#f7cf9a', '#a8bbd2'].map((h) => new THREE.Color(h));
+const mix3 = (arr, out) => out.copy(arr[0]).lerp(arr[1], state.h).lerp(arr[2], state.c);
+const warmEl = $('warm'), frostEl = $('frost');
+
+function applyState() {
+  mix3(TINT, scan.recolor);
+  mix3(SKY, scene.background);
+  snowGeo.setDrawRange(0, Math.floor(SNOW_N * smooth(0.12, 0.95, state.c)));
+}
+
+/* ---------- modes and the 90 second hot flash sequence ---------- */
+let target = { h: 0, c: 0 }, seq = null;
+const KF = {
+  h: [[0, 0], [6, 1], [24, 1], [46, 0], [90, 0]],
+  c: [[0, 0], [26, 0], [52, 1], [74, 1], [90, 0]]
+};
+const PHASES = [[0, 'Heat rises'], [6, 'Peak heat'], [24, 'The garden cools'], [52, 'Breathe, cool air'], [74, 'Back to calm']];
+const kf = (a, t) => {
+  for (let i = 0; i < a.length - 1; i++) if (t <= a[i + 1][0]) return a[i][1] + (a[i + 1][1] - a[i][1]) * smooth(a[i][0], a[i + 1][0], t);
+  return a[a.length - 1][1];
+};
+const btns = [...document.querySelectorAll('[data-mode]')];
+const goBtn = $('go'), phaseEl = $('phase'), clockEl = $('clock'), fillEl = $('fill');
+const skin = $('skin'), skinVal = $('skinVal');
+const pressed = (mode) => btns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.mode === mode ? 'true' : 'false'));
+function idleLabels() {
+  goBtn.textContent = 'Start a hot flash'; goBtn.dataset.running = 'false';
+  phaseEl.textContent = '90 second sequence'; clockEl.textContent = '0:00 / 1:30'; fillEl.style.clipPath = 'inset(0 100% 0 0)';
+}
+function setMode(m) {
+  seq = null; idleLabels(); pressed(m);
+  target = m === 'heat' ? { h: 1, c: 0 } : m === 'winter' ? { h: 0, c: 1 } : { h: 0, c: 0 };
+}
+function startSequence() { seq = { t: 0 }; pressed(''); goBtn.textContent = 'Stop'; goBtn.dataset.running = 'true'; }
+btns.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+goBtn.addEventListener('click', () => (seq ? setMode('calm') : startSequence()));
+window.addEventListener('keydown', (e) => { if (e.key === '1') setMode('calm'); else if (e.key === '2') setMode('heat'); else if (e.key === '3') setMode('winter'); });
+// Same hook as index.html: a real sensor can call window.garden.jump(heat, cold) later.
+window.garden = { setMode, jump(h, c) { seq = null; idleLabels(); pressed(''); state.h = h; state.c = c; target = { h, c }; } };
+
+/* ---------- simulated body signal: skin temperature crossing 36 starts the sequence ---------- */
+let wasHot = false;
+skin.addEventListener('input', () => {
+  const t = parseFloat(skin.value);
+  skinVal.textContent = t.toFixed(1) + ' °C';
+  const hot = t >= 36;
+  if (hot && !wasHot && !seq) startSequence();
+  wasHot = hot;
+});
+
+const fmt = (s) => Math.floor(s / 60) + ':' + ('0' + (Math.floor(s) % 60)).slice(-2);
+
+/* ---------- resize and main loop ---------- */
+function resize() {
+  const w = stage.clientWidth || window.innerWidth, h = stage.clientHeight || window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+let last = performance.now(), time = 0, lastH = -1, lastC = -1;
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
+
+  if (seq) {
+    seq.t += dt;
+    if (seq.t >= 90) setMode('calm');
+    else {
+      state.h = kf(KF.h, seq.t); state.c = kf(KF.c, seq.t);
+      let ph = PHASES[0]; for (const p of PHASES) if (seq.t >= p[0]) ph = p;
+      phaseEl.textContent = ph[1];
+      clockEl.textContent = fmt(seq.t) + ' / 1:30';
+      fillEl.style.clipPath = 'inset(0 ' + (100 - seq.t / 90 * 100).toFixed(2) + '% 0 0)';
+    }
+  }
+  if (!seq) {
+    const k = 1 - Math.exp(-dt / 2.2);
+    state.h += (target.h - state.h) * k; state.c += (target.c - state.c) * k;
+  }
+  if (Math.abs(state.h - lastH) + Math.abs(state.c - lastC) > 0.0004 || lastH < 0) { applyState(); lastH = state.h; lastC = state.c; }
+
+  const pulse = Math.sin(time * 1.5);
+  warmEl.style.opacity = (state.h * 0.9 * (0.84 + 0.16 * pulse)).toFixed(3);
+  frostEl.style.opacity = (state.c * 0.9).toFixed(3);
+
+  // snow falls, wrapping from the ground back to the top
+  if (state.c > 0.01) {
+    for (let i = 0; i < SNOW_N; i++) {
+      const y = i * 3 + 1;
+      snowPos[y] -= dt * (0.8 + snowSeed[i] * 1.2);
+      if (snowPos[y] < 0) snowPos[y] += BOX.h;
+      snowPos[i * 3] += Math.sin(time * 0.6 + snowSeed[i] * 40) * dt * 0.4;
+    }
+    snowGeo.attributes.position.needsUpdate = true;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+});
+
+window.scan = scan; // for trying things in the browser console
+</script>
+</body>
+</html>
