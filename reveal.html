@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inner Weather Garden - Reveal experiment</title>
+<style>
+/* Experiment: the scan appears out of blank paper. Style 1 = a torn scroll edge that sweeps across; style 2 = layered green ink that unfolds like cloud. */
+html, body { height: 100%; margin: 0; background: #f4efe3; overflow: hidden; font-family: 'Helvetica Neue', Arial, system-ui, sans-serif; color: #2a2a2a; }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.panel { position: fixed; left: 16px; bottom: 16px; width: min(340px, calc(100% - 32px)); padding: 14px 16px; border-radius: 14px; background: rgba(255, 255, 255, .6); border: 1px solid rgba(0, 0, 0, .15); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 13px; box-sizing: border-box; }
+.panel h1 { margin: 0 0 10px; font-size: 16px; font-weight: 500; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+button { padding: 7px 14px; border-radius: 999px; border: 1px solid rgba(0, 0, 0, .25); background: #fff; font: inherit; cursor: pointer; }
+button[aria-pressed="true"] { background: #2a2a2a; color: #fff; }
+.go { background: #2f8f5b; color: #fff; border-color: transparent; }
+.panel label { display: flex; justify-content: space-between; margin-top: 10px; }
+.panel input[type=range] { width: 100%; }
+#status { margin-top: 10px; color: #555; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div class="panel">
+  <h1>Reveal experiment</h1>
+  <div class="seg">
+    <button type="button" id="s1" aria-pressed="true">Style 1 scroll</button>
+    <button type="button" id="s2" aria-pressed="false">Style 2 ink cloud</button>
+    <button type="button" id="s3" aria-pressed="false">Style 3 both</button>
+  </div>
+  <div class="seg">
+    <button type="button" class="go" id="enter">Enter</button>
+    <button type="button" id="reset">Reset</button>
+  </div>
+  <label for="prog"><span>Edge (drag to scrub)</span><b id="progVal"></b></label>
+  <input type="range" id="prog" min="0" max="1.1" step="0.005" value="0.5">
+  <label for="sat"><span>Style 1: colour strength</span><b id="satVal"></b></label>
+  <input type="range" id="sat" min="0.6" max="2.4" step="0.05" value="1.5">
+  <label for="layers"><span>Style 2: number of ink layers</span><b id="layersVal"></b></label>
+  <input type="range" id="layers" min="3" max="9" step="1" value="9">
+  <div id="status">Loading scan...</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
+
+const $ = (id) => document.getElementById(id);
+const statusEl = $('status');
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+$('stage').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const PAPER = [0xf4efe3, 0xeef1ea, 0xf0f0e6];      // cream for style 1, cooler white for style 2, in between for style 3
+scene.background = new THREE.Color(PAPER[0]);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
+scene.add(new SparkRenderer({ renderer }));
+
+// Same placement as scan.html (scan is z-up, turned -90 degrees around x; garden centre near (-25, 0, 13)).
+const GARDEN = new THREE.Vector3(-25, 0, 13);
+const scan = new SplatMesh({ url: 'assets/china-garden-lod6.ply' });
+scan.rotation.x = -Math.PI / 2;
+scene.add(scan);
+
+/* ---------- uniforms: numbers the page changes, the splat program reads ---------- */
+const progress = dyno.dynoFloat(0.5);   // how far the edge has swept, 0 = nothing, 1 = everything
+const style = dyno.dynoFloat(0);        // 0 = scroll, 1 = ink cloud, 2 = both
+const sat = dyno.dynoFloat(1.6);
+const layers = dyno.dynoFloat(5);
+const time = dyno.dynoFloat(0);
+
+// The program below runs once per splat. Scan coordinates: x and y are the ground, z is up. The garden centre is about (-25, -13).
+scan.objectModifier = dyno.dynoBlock(
+  { gsplat: dyno.Gsplat },
+  { gsplat: dyno.Gsplat },
+  ({ gsplat }) => {
+    const d = new dyno.Dyno({
+      inTypes: { gsplat: dyno.Gsplat, progress: 'float', style: 'float', sat: 'float', layers: 'float', time: 'float' },
+      outTypes: { gsplat: dyno.Gsplat },
+      globals: () => [dyno.unindent(/* glsl */ `
+        float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+        float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; } return s; }
+      `)],
+      statements: ({ inputs, outputs }) => dyno.unindentLines(/* glsl */ `
+        ${outputs.gsplat} = ${inputs.gsplat};
+        vec3 p = ${inputs.gsplat}.center;
+        vec3 c = ${inputs.gsplat}.rgba.rgb;
+        float lum = dot(c, vec3(0.299, 0.587, 0.114));
+        vec2 q = p.xy - vec2(-25.0, -13.0);
+        float inside;      // above 0 = this splat is on the painted side of the edge
+        vec3 outc = c;
+        float alpha;
+        if (${inputs.style} < 0.5) {
+          // style 1: a clear diagonal edge (a "/" line on screen) sweeps across; only a little noise so it reads as a cut edge
+          float s = dot(q, normalize(vec2(1.0, -1.0)));
+          float t = mix(-36.0, 36.0, ${inputs.progress});
+          inside = t - (s + (fbm(p.xy * 0.6) - 0.5) * 1.2);
+          outc = clamp((mix(vec3(lum), c, ${inputs.sat}) - 0.5) * 1.15 + 0.5, 0.0, 1.0);
+          float rim = 1.0 - smoothstep(0.0, 1.4, inside);                  // a warm brown band right at the edge, like the rim of the paper
+          outc = mix(outc, vec3(0.30, 0.20, 0.12), rim * 0.6);
+          alpha = smoothstep(0.0, 0.35, inside);
+        } else if (${inputs.style} > 1.5) {
+          // style 3: style 1's diagonal sweep, but its front is the style 2 cloud edge in green ink; the full illustration colour follows behind it
+          float s = dot(q, normalize(vec2(1.0, -1.0)));
+          float t = mix(-36.0, 44.0, ${inputs.progress});
+          float warp = (fbm(q * 0.07 + vec2(${inputs.time} * 0.05, 0.0)) - 0.5) * 10.0;
+          float lead = t - s + warp;                                        // above 0 = reached by the ink
+          float v = clamp((lum - 0.5) * 1.6 + 0.5, 0.0, 1.0);
+          float b = floor(v * ${inputs.layers}) / ${inputs.layers};
+          vec3 deep = vec3(0.03, 0.28, 0.24), mid = vec3(0.18, 0.56, 0.36), lime = vec3(0.72, 0.82, 0.22), pale = vec3(0.90, 0.94, 0.84);
+          vec3 ramp = b < 0.34 ? mix(deep, mid, b / 0.34) : (b < 0.67 ? mix(mid, lime, (b - 0.34) / 0.33) : mix(lime, pale, (b - 0.67) / 0.33));
+          vec3 ink = mix(ramp, c * vec3(0.9, 1.05, 0.9), 0.25);
+          // pavilions keep their own colour with a light green wash; green things (trees) and the low ground turn into green ink
+          vec3 keep = clamp((mix(vec3(lum), c, ${inputs.sat}) - 0.5) * 1.1 + 0.5, 0.0, 1.0) * vec3(0.93, 1.03, 0.93);
+          float veg = smoothstep(-0.02, 0.08, c.g - max(c.r, c.b));         // 1 where green is the strongest colour
+          float ground = 1.0 - smoothstep(0.6, 2.0, p.z);                   // 1 on the ground (scan z is up)
+          float inkAmt = max(veg, ground * 0.85);
+          outc = mix(keep, ink, inkAmt);
+          inside = lead;
+          alpha = smoothstep(0.0, 1.2, lead);
+        } else {
+          // style 2: the edge is a circle bent by slow noise, so it unfolds like cloud; the colour is cut into a few green layers
+          float warp = (fbm(q * 0.07 + vec2(${inputs.time} * 0.05, 0.0)) - 0.5) * 22.0;
+          inside = ${inputs.progress} * 52.0 + warp - length(q);
+          float v = clamp((lum - 0.5) * 1.6 + 0.5, 0.0, 1.0);
+          float b = floor(v * ${inputs.layers}) / ${inputs.layers};
+          vec3 deep = vec3(0.03, 0.28, 0.24), mid = vec3(0.18, 0.56, 0.36), lime = vec3(0.72, 0.82, 0.22), pale = vec3(0.90, 0.94, 0.84);
+          vec3 ramp = b < 0.34 ? mix(deep, mid, b / 0.34) : (b < 0.67 ? mix(mid, lime, (b - 0.34) / 0.33) : mix(lime, pale, (b - 0.67) / 0.33));
+          outc = mix(ramp, c * vec3(0.9, 1.05, 0.9), 0.15);
+          alpha = smoothstep(0.0, 1.2, inside);
+        }
+        ${outputs.gsplat}.rgba.rgb = outc;
+        ${outputs.gsplat}.rgba.a = ${inputs.gsplat}.rgba.a * alpha;
+      `),
+    });
+    gsplat = d.apply({ gsplat, progress, style, sat, layers, time }).gsplat;
+    return { gsplat };
+  }
+);
+scan.updateGenerator();
+
+scan.initialized
+  .then(() => { statusEl.textContent = 'Drag to look around, scroll to zoom'; })
+  .catch((err) => { statusEl.textContent = 'Could not load the scan: ' + err.message; });
+
+/* ---------- panel ---------- */
+const START = [0.5, 0.45, 0.5];             // style 1 opens on half the picture, style 2 on a cloud-shaped patch, style 3 on half in ink
+let mode = 0, anim = null;
+const prog = $('prog'), satEl = $('sat'), layersEl = $('layers');
+const refresh = () => {
+  progress.value = +prog.value; sat.value = +satEl.value; layers.value = +layersEl.value;
+  $('progVal').textContent = (+prog.value).toFixed(2); $('satVal').textContent = (+satEl.value).toFixed(2); $('layersVal').textContent = layersEl.value;
+  scan.updateVersion();
+};
+function setMode(m) {
+  mode = m; style.value = m; anim = null;
+  ['s1', 's2', 's3'].forEach((id, i) => $(id).setAttribute('aria-pressed', m === i ? 'true' : 'false'));
+  scene.background.set(PAPER[m]); document.body.style.background = '#' + scene.background.getHexString();
+  prog.value = START[m]; refresh();
+}
+$('s1').addEventListener('click', () => setMode(0));
+$('s2').addEventListener('click', () => setMode(1));
+$('s3').addEventListener('click', () => setMode(2));
+$('reset').addEventListener('click', () => setMode(mode));
+$('enter').addEventListener('click', () => { anim = { t: 0, from: +prog.value }; });
+[prog, satEl, layersEl].forEach((el) => el.addEventListener('input', () => { anim = null; refresh(); }));
+setMode(0);
+
+/* ---------- camera and loop ---------- */
+camera.position.set(GARDEN.x + 31, 18.7,GARDEN.z + 31);   // from the right, 45 degrees to the side, looking down about 22 degrees
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(GARDEN.x, 1, GARDEN.z);
+controls.enableDamping = true;
+controls.update();
+
+function resize() {
+  const w = window.innerWidth, h = window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+const ENTER_SECONDS = 10;
+let last = performance.now();
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (anim) {
+    anim.t += dt;
+    const k = Math.min(1, anim.t / ENTER_SECONDS), e = k * k * (3 - 2 * k);   // ease in and out
+    prog.value = anim.from + (1.05 - anim.from) * e;
+    time.value = anim.t;
+    refresh();
+    if (k >= 1) anim = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>

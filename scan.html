@@ -74,6 +74,7 @@ button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
       <button type="button" data-mode="calm" aria-pressed="true">Calm</button>
       <button type="button" data-mode="heat" aria-pressed="false">Heat</button>
       <button type="button" data-mode="winter" aria-pressed="false">Winter</button>
+      <button type="button" id="replay">Replay reveal</button>
     </div>
   </header>
   <footer class="bottom">
@@ -99,7 +100,7 @@ button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage'), statusEl = $('status');
@@ -128,15 +129,72 @@ scene.add(spark);
 // The scan is z-up (measured from the file); three.js is y-up. -90 degrees around x turns z into up.
 // After the turn, the garden centre (about x -25, y -13, z 0 in scan units) sits at about (-25, 0, 13).
 const GARDEN = new THREE.Vector3(-25, 0, 13);
-const scan = new SplatMesh({ url: 'assets/china-garden-lod6.ply' });
+// lod4 = about 655k splats (45 MB), sharper than the lod6 we used before (164k). Heavier for the headset: if VR stutters, go back to lod6.
+const scan = new SplatMesh({ url: 'assets/china-garden-lod4.ply' });
 scan.rotation.x = -Math.PI / 2;
 scene.add(scan);
+
+/* ---------- the look: green ink on trees and ground, the pavilions keep their colour (from reveal.html style 3) ---------- */
+// Two numbers the page changes, the splat program reads: how far the diagonal reveal has swept (1.1 = everything), and a clock for the cloud edge.
+const revealProgress = dyno.dynoFloat(1.1);
+const revealTime = dyno.dynoFloat(0);
+scan.objectModifier = dyno.dynoBlock(
+  { gsplat: dyno.Gsplat },
+  { gsplat: dyno.Gsplat },
+  ({ gsplat }) => {
+    const d = new dyno.Dyno({
+      inTypes: { gsplat: dyno.Gsplat, progress: 'float', time: 'float' },
+      outTypes: { gsplat: dyno.Gsplat },
+      globals: () => [dyno.unindent(/* glsl */ `
+        float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+        float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; } return s; }
+      `)],
+      statements: ({ inputs, outputs }) => dyno.unindentLines(/* glsl */ `
+        ${outputs.gsplat} = ${inputs.gsplat};
+        vec3 p = ${inputs.gsplat}.center;            // scan coordinates: x and y are the ground, z is up
+        vec3 c = ${inputs.gsplat}.rgba.rgb;
+        float lum = dot(c, vec3(0.299, 0.587, 0.114));
+        vec2 q = p.xy - vec2(-25.0, -13.0);
+        // diagonal sweep with a cloud-shaped front
+        float s = dot(q, normalize(vec2(1.0, -1.0)));
+        float t = mix(-36.0, 44.0, ${inputs.progress});
+        float warp = (fbm(q * 0.07 + vec2(${inputs.time} * 0.05, 0.0)) - 0.5) * 10.0;
+        float lead = t - s + warp;
+        // green ink: luminance cut into 9 layers, deep green to pale
+        float v = clamp((lum - 0.5) * 1.6 + 0.5, 0.0, 1.0);
+        float b = floor(v * 9.0) / 9.0;
+        vec3 deep = vec3(0.03, 0.28, 0.24), mid = vec3(0.18, 0.56, 0.36), lime = vec3(0.72, 0.82, 0.22), pale = vec3(0.90, 0.94, 0.84);
+        vec3 ramp = b < 0.34 ? mix(deep, mid, b / 0.34) : (b < 0.67 ? mix(mid, lime, (b - 0.34) / 0.33) : mix(lime, pale, (b - 0.67) / 0.33));
+        vec3 ink = mix(ramp, c * vec3(0.9, 1.05, 0.9), 0.25);
+        // pavilions keep their colour with a light green wash; green things and the low ground become ink
+        vec3 keep = clamp((mix(vec3(lum), c, 1.5) - 0.5) * 1.1 + 0.5, 0.0, 1.0) * vec3(0.93, 1.03, 0.93);
+        float veg = smoothstep(-0.02, 0.08, c.g - max(c.r, c.b));
+        float ground = 1.0 - smoothstep(0.6, 2.0, p.z);
+        ${outputs.gsplat}.rgba.rgb = mix(keep, ink, max(veg, ground * 0.85));
+        ${outputs.gsplat}.rgba.a = ${inputs.gsplat}.rgba.a * smoothstep(0.0, 1.2, lead);
+      `),
+    });
+    gsplat = d.apply({ gsplat, progress: revealProgress, time: revealTime }).gsplat;
+    return { gsplat };
+  }
+);
+scan.updateGenerator();
+
+// The reveal: the edge sweeps from half the garden to all of it in 10 seconds.
+const REVEAL_SECONDS = 10;
+let reveal = null, startAfterReveal = false;
+function playReveal(thenSequence) { reveal = { t: 0 }; startAfterReveal = !!thenSequence; revealProgress.value = 0.5; scan.updateVersion(); }
 scan.initialized
   .then(() => { statusEl.textContent = 'Drag to look around, scroll to zoom'; })
   .catch((err) => { statusEl.textContent = 'Could not load the scan: ' + err.message; });
 
 /* ---------- desktop camera ---------- */
-const DESK_POS = new THREE.Vector3(GARDEN.x, 26, GARDEN.z + 36);
+// From the right, 45 degrees to the side, looking down about 22 degrees (same as reveal.html).
+const DESK_POS = new THREE.Vector3(GARDEN.x + 31, 18.7, GARDEN.z + 31);
 camera.position.copy(DESK_POS);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(GARDEN.x, 1, GARDEN.z);
@@ -146,9 +204,9 @@ controls.update();
 /* ---------- VR ---------- */
 const vrBtn = VRButton.createButton(renderer);
 $('vrSlot').appendChild(vrBtn);
-// The web buttons are not visible inside the headset, so entering VR starts the 90 second sequence by itself.
-renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(GARDEN); rig.position.y = 0; if (!seq) startSequence(); });
-renderer.xr.addEventListener('sessionend', () => { controls.enabled = true; rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update(); setMode('calm'); });
+// The web buttons are not visible inside the headset, so entering VR plays the reveal and then starts the 90 second sequence by itself.
+renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(GARDEN); rig.position.y = 0; if (!seq) playReveal(true); });
+renderer.xr.addEventListener('sessionend', () => { controls.enabled = true; rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update(); reveal = null; revealProgress.value = 1.1; scan.updateVersion(); setMode('calm'); });
 
 /* ---------- snow: plain points that fall around the garden ---------- */
 const SNOW_N = 2500, BOX = { x0: -50, x1: 2, z0: -12, z1: 38, h: 16 };
@@ -211,6 +269,7 @@ function setMode(m) {
 }
 function startSequence() { seq = { t: 0 }; pressed(''); goBtn.textContent = 'Stop'; goBtn.dataset.running = 'true'; }
 btns.forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+$('replay').addEventListener('click', () => playReveal(false));
 goBtn.addEventListener('click', () => (seq ? setMode('calm') : startSequence()));
 window.addEventListener('keydown', (e) => { if (e.key === '1') setMode('calm'); else if (e.key === '2') setMode('heat'); else if (e.key === '3') setMode('winter'); });
 // Same hook as index.html: a real sensor can call window.garden.jump(heat, cold) later.
@@ -257,6 +316,15 @@ renderer.setAnimationLoop((now) => {
     state.h += (target.h - state.h) * k; state.c += (target.c - state.c) * k;
   }
   if (Math.abs(state.h - lastH) + Math.abs(state.c - lastC) > 0.0004 || lastH < 0) { applyState(); lastH = state.h; lastC = state.c; }
+
+  if (reveal) {
+    reveal.t += dt;
+    const k = clamp(reveal.t / REVEAL_SECONDS), e = k * k * (3 - 2 * k);   // ease in and out
+    revealProgress.value = lerp(0.5, 1.1, e);
+    revealTime.value = reveal.t;
+    scan.updateVersion();
+    if (k >= 1) { reveal = null; if (startAfterReveal && !seq) startSequence(); }
+  }
 
   const pulse = Math.sin(time * 1.5);
   warmEl.style.opacity = (state.h * 0.9 * (0.84 + 0.16 * pulse)).toFixed(3);

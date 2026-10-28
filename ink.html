@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inner Weather Garden - Ink experiment</title>
+<style>
+/* Experiment: the same scan as scan.html, repainted as ink wash. Separate file so the published scan.html stays as it is. */
+html, body { height: 100%; margin: 0; background: #ece6d6; overflow: hidden; font-family: 'Helvetica Neue', Arial, system-ui, sans-serif; color: #2a2a2a; }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.panel { position: fixed; left: 16px; bottom: 16px; width: min(320px, calc(100% - 32px)); padding: 14px 16px; border-radius: 14px; background: rgba(255, 255, 255, .55); border: 1px solid rgba(0, 0, 0, .15); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 13px; box-sizing: border-box; }
+.panel h1 { margin: 0 0 8px; font-size: 16px; font-weight: 500; }
+.panel label { display: flex; justify-content: space-between; margin-top: 10px; }
+.panel input[type=range] { width: 100%; }
+.panel button { margin-top: 12px; padding: 7px 14px; border-radius: 999px; border: 1px solid rgba(0, 0, 0, .25); background: #fff; font: inherit; cursor: pointer; }
+#status { margin-top: 10px; color: #555; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+<div class="panel">
+  <h1>Ink wash experiment 水墨</h1>
+  <label for="contrast"><span>Contrast</span><b id="contrastVal"></b></label>
+  <input type="range" id="contrast" min="0.5" max="5" step="0.1" value="2.4">
+  <label for="bright"><span>Paper brightness</span><b id="brightVal"></b></label>
+  <input type="range" id="bright" min="-0.4" max="0.4" step="0.01" value="0.08">
+  <button type="button" id="toggle">Show original colour</button>
+  <div id="status">Loading scan...</div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), statusEl = $('status');
+
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xece6d6);   // rice paper
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 500);
+
+const spark = new SparkRenderer({ renderer });
+scene.add(spark);
+
+// Same placement as scan.html: the scan is z-up, so turn it -90 degrees around x; the garden centre ends up near (-25, 0, 13).
+const GARDEN = new THREE.Vector3(-25, 0, 13);
+const scan = new SplatMesh({ url: 'assets/china-garden-lod6.ply' });
+scan.rotation.x = -Math.PI / 2;
+scene.add(scan);
+
+/* ---------- the ink look: a small program that runs once for every splat on the graphics card ---------- */
+// Uniforms are numbers the page can change later (like a p5 variable the shader reads each frame).
+const contrast = dyno.dynoFloat(2.4);
+const bright = dyno.dynoFloat(0.08);
+const strength = dyno.dynoFloat(1);   // 1 = ink, 0 = original colour
+
+scan.objectModifier = dyno.dynoBlock(
+  { gsplat: dyno.Gsplat },
+  { gsplat: dyno.Gsplat },
+  ({ gsplat }) => {
+    const d = new dyno.Dyno({
+      inTypes: { gsplat: dyno.Gsplat, contrast: 'float', bright: 'float', strength: 'float' },
+      outTypes: { gsplat: dyno.Gsplat },
+      statements: ({ inputs, outputs }) => dyno.unindentLines(/* glsl */ `
+        ${outputs.gsplat} = ${inputs.gsplat};
+        vec3 c = ${inputs.gsplat}.rgba.rgb;
+        float l = dot(c, vec3(0.299, 0.587, 0.114));                       // how light is this splat, 0 to 1
+        float v = clamp((l - 0.5) * ${inputs.contrast} + 0.5 + ${inputs.bright}, 0.0, 1.0);
+        vec3 inkCol = mix(vec3(0.06, 0.06, 0.07), vec3(0.92, 0.90, 0.84), v);   // dark ink to paper white
+        ${outputs.gsplat}.rgba.rgb = mix(c, inkCol, ${inputs.strength});
+      `),
+    });
+    gsplat = d.apply({ gsplat, contrast, bright, strength }).gsplat;
+    return { gsplat };
+  }
+);
+scan.updateGenerator();
+
+scan.initialized
+  .then(() => { statusEl.textContent = 'Drag to look around, scroll to zoom'; })
+  .catch((err) => { statusEl.textContent = 'Could not load the scan: ' + err.message; });
+
+/* ---------- controls ---------- */
+const cv = $('contrast'), br = $('bright'), tg = $('toggle');
+const showVals = () => { $('contrastVal').textContent = (+cv.value).toFixed(1); $('brightVal').textContent = (+br.value).toFixed(2); };
+cv.addEventListener('input', () => { contrast.value = +cv.value; scan.updateVersion(); showVals(); });
+br.addEventListener('input', () => { bright.value = +br.value; scan.updateVersion(); showVals(); });
+tg.addEventListener('click', () => {
+  strength.value = strength.value > 0.5 ? 0 : 1;
+  tg.textContent = strength.value > 0.5 ? 'Show original colour' : 'Show ink wash';
+  scene.background.set(strength.value > 0.5 ? 0xece6d6 : 0xaebfca);
+  scan.updateVersion();
+});
+showVals();
+
+camera.position.set(GARDEN.x, 26, GARDEN.z + 36);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(GARDEN.x, 1, GARDEN.z);
+controls.enableDamping = true;
+controls.update();
+
+function resize() {
+  const w = stage.clientWidth || window.innerWidth, h = stage.clientHeight || window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
