@@ -75,6 +75,7 @@ button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
       <button type="button" data-mode="heat" aria-pressed="false">Heat</button>
       <button type="button" data-mode="winter" aria-pressed="false">Winter</button>
       <button type="button" id="replay">Replay reveal</button>
+      <button type="button" id="pick" aria-pressed="false">Pick VR start</button>
     </div>
   </header>
   <footer class="bottom">
@@ -209,8 +210,63 @@ $('vrSlot').appendChild(vrBtn);
 // rotation.y = 45 degrees turns the default "forward" (-z) towards (-x, -z), i.e. from the corner towards the centre.
 const START_OFFSET = 14;   // how far from the garden centre, in x and in z (22 was outside the scan)
 const VR_START = new THREE.Vector3(GARDEN.x + START_OFFSET, 0, GARDEN.z + START_OFFSET);
-renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(VR_START); rig.rotation.y = Math.PI / 4; if (!seq) playReveal(true); });
+let VR_YAW = Math.PI / 4;
+renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(VR_START); rig.rotation.y = VR_YAW; if (!seq) playReveal(true); });
 renderer.xr.addEventListener('sessionend', () => { controls.enabled = true; rig.position.set(0, 0, 0); rig.rotation.y = 0; camera.position.copy(DESK_POS); controls.update(); reveal = null; revealProgress.value = 1.1; scan.updateVersion(); setMode('calm'); });
+
+/* ---------- picking: click the scene to find out where something is ---------- */
+// "Picking" = shoot an invisible ray from the pointer into the scene and see what it hits. Spark's SplatMesh can be hit by a normal THREE.Raycaster.
+const ray = new THREE.Raycaster();
+const marker = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf08a4b, depthTest: false }));
+marker.renderOrder = 10; marker.visible = false;
+scene.add(marker);
+
+// Move the VR start to a point and turn it to face the garden centre (yaw formula: forward is (-sin, -cos) of the angle).
+function setStart(p) {
+  VR_START.copy(p);
+  VR_YAW = Math.atan2(-(GARDEN.x - p.x), -(GARDEN.z - p.z));
+  marker.position.copy(p); marker.visible = true;
+  const txt = [p.x, p.y, p.z].map((v) => v.toFixed(1)).join(',');
+  statusEl.textContent = 'VR start: x ' + p.x.toFixed(1) + ', y ' + p.y.toFixed(1) + ', z ' + p.z.toFixed(1) + '  (?start=' + txt + ')';
+}
+const startParam = new URLSearchParams(location.search).get('start');
+if (startParam) { const [x, y, z] = startParam.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) setStart(new THREE.Vector3(x, y, z)); }
+
+let pickMode = false, downAt = null;
+const pickBtn = $('pick');
+pickBtn.addEventListener('click', () => {
+  pickMode = !pickMode; pickBtn.setAttribute('aria-pressed', pickMode ? 'true' : 'false');
+  if (pickMode) statusEl.textContent = 'Click the ground where the audience should stand';
+});
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!pickMode || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;   // a drag is for looking around, not a click
+  const r = renderer.domElement.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+  ray.far = Infinity;
+  const hit = ray.intersectObject(scan)[0];
+  if (hit) setStart(hit.point); else statusEl.textContent = 'Nothing hit there, try a spot with ground or objects';
+});
+
+/* ---------- walking in VR: point a controller at the ground and press the trigger to teleport ---------- */
+// Teleport (jump to the spot) instead of smooth walking, because gliding movement makes many people dizzy.
+const rayLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -8)]),
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
+);
+const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
+function teleportFrom(ctrl) {
+  ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
+  ray.set(_o, _d); ray.far = 40;
+  const hit = ray.intersectObject(scan)[0];
+  if (hit && hit.point.y < 2) rig.position.set(hit.point.x, hit.point.y, hit.point.z);   // ignore hits on treetops and roofs
+}
+for (const i of [0, 1]) {
+  const ctrl = renderer.xr.getController(i);
+  ctrl.add(rayLine.clone());
+  ctrl.addEventListener('select', () => teleportFrom(ctrl));
+  rig.add(ctrl);
+}
 
 /* ---------- snow: plain points that fall around the garden ---------- */
 const SNOW_N = 2500, BOX = { x0: -50, x1: 2, z0: -12, z1: 38, h: 16 };
