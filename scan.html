@@ -261,6 +261,30 @@ function teleportFrom(ctrl) {
   const hit = ray.intersectObject(scan)[0];
   if (hit && hit.point.y < 2) rig.position.set(hit.point.x, hit.point.y, hit.point.z);   // ignore hits on treetops and roofs
 }
+// Walking: push the LEFT thumbstick to glide the way your head is facing. The scan has no floor mesh to collide with,
+// so every 0.2 s a ray shoots down to find the ground and the rig follows its height. There are no walls: you can walk through trees.
+const WALK_SPEED = 1.4;   // metres per second
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _from = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+let groundClock = 0;
+function walk(dt) {
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  for (const src of session.inputSources) {
+    if (src.handedness !== 'left' || !src.gamepad) continue;
+    const sx = src.gamepad.axes[2] || 0, sy = src.gamepad.axes[3] || 0;
+    if (Math.hypot(sx, sy) < 0.2) return;   // dead zone: sticks never rest at exactly 0
+    renderer.xr.getCamera().getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
+    _right.crossVectors(_fwd, _up);
+    rig.position.addScaledVector(_fwd, -sy * WALK_SPEED * dt).addScaledVector(_right, sx * WALK_SPEED * dt);
+    groundClock += dt;
+    if (groundClock > 0.2) {
+      groundClock = 0;
+      ray.set(_from.set(rig.position.x, rig.position.y + 1.2, rig.position.z), _down); ray.far = 4;
+      const hit = ray.intersectObject(scan)[0];
+      if (hit) rig.position.y = lerp(rig.position.y, hit.point.y, 0.5);
+    }
+  }
+}
 for (const i of [0, 1]) {
   const ctrl = renderer.xr.getController(i);
   ctrl.add(rayLine.clone());
@@ -385,6 +409,8 @@ renderer.setAnimationLoop((now) => {
     scan.updateVersion();
     if (k >= 1) { reveal = null; if (startAfterReveal && !seq) startSequence(); }
   }
+
+  walk(dt);
 
   const pulse = Math.sin(time * 1.5);
   warmEl.style.opacity = (state.h * 0.9 * (0.84 + 0.16 * pulse)).toFixed(3);
