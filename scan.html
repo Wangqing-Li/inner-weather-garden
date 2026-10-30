@@ -207,7 +207,8 @@ $('vrSlot').appendChild(vrBtn);
 // The web buttons are not visible inside the headset, so entering VR plays the reveal and then starts the 90 second sequence by itself.
 // The audience stands at the bottom-right corner of the garden (the same side the desktop view looks from) and faces the garden centre.
 // rotation.y = 45 degrees turns the default "forward" (-z) towards (-x, -z), i.e. from the corner towards the centre.
-const VR_START = new THREE.Vector3(GARDEN.x + 22, 0, GARDEN.z + 22);
+const START_OFFSET = 14;   // how far from the garden centre, in x and in z (22 was outside the scan)
+const VR_START = new THREE.Vector3(GARDEN.x + START_OFFSET, 0, GARDEN.z + START_OFFSET);
 renderer.xr.addEventListener('sessionstart', () => { controls.enabled = false; rig.position.copy(VR_START); rig.rotation.y = Math.PI / 4; if (!seq) playReveal(true); });
 renderer.xr.addEventListener('sessionend', () => { controls.enabled = true; rig.position.set(0, 0, 0); rig.rotation.y = 0; camera.position.copy(DESK_POS); controls.update(); reveal = null; revealProgress.value = 1.1; scan.updateVersion(); setMode('calm'); });
 
