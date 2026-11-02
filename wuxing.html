@@ -34,6 +34,10 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
 #vr { position: static !important; }
 @media (max-width: 520px) { .status { display: none; } }
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zhi+Mang+Xing&text=%E9%87%91%E6%9C%A8%E6%B0%B4%E7%81%AB%E5%9C%9F&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500&text=ABCDEFGHIJKLMNOPQRSTUVWXYZ&display=swap" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
@@ -160,63 +164,72 @@ scene.add(mist);
    ===================================================================== */
 // sizes are in metres: a card 0.8 m wide and 1.8 m tall hangs 2.4 m away, 30 degrees apart (the first version)
 const CARD_W = 0.8, CARD_H = 1.8, ARC_R = 2.4, ARC_STEP = 30 * Math.PI / 180, EYE = 1.5;
-// left to right; Wood is in the middle because it is the first one we build
+// left to right; Wood is in the middle because it is the first one we build.
+// Card colours: the first (lightest) colour of each set on the traditional colour poster. Fire has no red set on it, so it takes the warm brown from the orange set.
+const INK = '#1d2b2a', GOLD_A = '#e6c675', GOLD_B = '#b8892f';
 const ELEMENTS = [
-  { id: 'metal', word: 'METAL', zh: '金', bg: '#6b5740', fg: '#d9c89a', shape: 'triangle' },
-  { id: 'water', word: 'WATER', zh: '水', bg: '#1f5f7d', fg: '#d8dde0', shape: 'drop' },
-  { id: 'wood',  word: 'WOOD',  zh: '木', bg: '#1f6b45', fg: '#e5a85a', shape: 'circle' },
-  { id: 'fire',  word: 'FIRE',  zh: '火', bg: '#9b1c1c', fg: '#f2833a', shape: 'flame' },
-  { id: 'earth', word: 'EARTH', zh: '土', bg: '#1c1a19', fg: '#d9c89a', shape: 'square' },
+  { id: 'metal', word: 'METAL', zh: '金', bg: '#E2E1E4', note: 'Clarity and stillness. A bell that settles the room.' },
+  { id: 'water', word: 'WATER', zh: '水', bg: '#8BA3C7', note: 'Flow and release. Ripples that slowly settle.' },
+  { id: 'wood',  word: 'WOOD',  zh: '木', bg: '#A6BAB1', note: 'Growth and breath. Bamboo reaching toward the light.' },
+  { id: 'fire',  word: 'FIRE',  zh: '火', bg: '#BC6E37', note: 'Focus and warmth. A single flame to rest your eyes on.' },
+  { id: 'earth', word: 'EARTH', zh: '土', bg: '#DDB078', note: 'Grounding and stability. Solid stone beneath you.' },
 ];
-const CJK = '"Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", serif';
+const BRUSH = '"Zhi Mang Xing", "Xingkai SC", "STXingkai", "Kaiti SC", serif';   // a brush-script font from Google Fonts, loaded in <head>
+const SERIF = '"Playfair Display", "Didot", Georgia, serif';                      // high-contrast serif for the English word
 
-function drawCard(el) {
-  const W = 512, H = Math.round(512 * CARD_H / CARD_W);
-  const c = document.createElement('canvas'); c.width = W; c.height = H;
-  const g = c.getContext('2d');
-  g.fillStyle = el.bg; g.fillRect(0, 0, W, H);
-  // paper grain: lots of short, faint horizontal strokes, light and dark
-  for (let i = 0; i < 2600; i++) {
-    const x = Math.random() * W, y = Math.random() * H, len = 8 + Math.random() * 60;
-    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,' + (0.03 + Math.random() * 0.07) + ')' : 'rgba(0,0,0,' + (0.04 + Math.random() * 0.09) + ')';
-    g.fillRect(x, y, len, 1 + Math.random() * 1.5);
-  }
-  // symbol in the upper third
-  const cx = W / 2, cy = H * 0.3;
-  g.fillStyle = el.fg;
+// The card outline: a rectangle whose four corners are bitten out by quarter circles, like the window shapes on the poster.
+function cardShape(g, W, H, inset, r) {
+  const x0 = inset, y0 = inset, x1 = W - inset, y1 = H - inset;
   g.beginPath();
-  if (el.shape === 'circle') g.arc(cx, cy, 130, 0, Math.PI * 2);
-  else if (el.shape === 'triangle') { g.moveTo(cx, cy - 135); g.lineTo(cx + 150, cy + 110); g.lineTo(cx - 150, cy + 110); g.closePath(); }
-  else if (el.shape === 'square') g.rect(cx - 115, cy - 115, 230, 230);
-  else if (el.shape === 'drop') {
-    g.moveTo(cx, cy - 150); g.bezierCurveTo(cx + 20, cy - 90, cx + 100, cy - 20, cx + 100, cy + 40);
-    g.arc(cx, cy + 40, 100, 0, Math.PI); g.bezierCurveTo(cx - 100, cy - 20, cx - 20, cy - 90, cx, cy - 150);
-  } else {   // flame
-    // a tall tongue with a smaller lick on the left: right side down, round the bottom, then back up the left side
-    g.moveTo(cx + 10, cy - 175); g.bezierCurveTo(cx + 90, cy - 60, cx + 135, cy + 20, cx + 85, cy + 100);
-    g.bezierCurveTo(cx + 60, cy + 145, cx - 60, cy + 145, cx - 85, cy + 100);
-    g.bezierCurveTo(cx - 125, cy + 30, cx - 80, cy - 30, cx - 50, cy - 75);
-    g.bezierCurveTo(cx - 40, cy - 40, cx - 20, cy - 30, cx - 15, cy - 55);
-    g.bezierCurveTo(cx - 10, cy - 100, cx - 20, cy - 135, cx + 10, cy - 175); g.closePath();
-  }
-  g.fill();
-  // the Chinese character sits on the symbol, in the card colour
-  g.fillStyle = el.bg; g.font = '800 150px ' + CJK; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(el.zh, cx, cy + (el.shape === 'triangle' ? 40 : 6));
-  // English word, letter by letter so it is spaced out
-  g.font = '500 54px "Cormorant Garamond", Georgia, serif'; g.fillStyle = el.fg;
-  const gap = 14, widths = [...el.word].map((ch) => g.measureText(ch).width);
-  let x = cx - (widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1)) / 2;
-  [...el.word].forEach((ch, i) => { g.textAlign = 'left'; g.fillText(ch, x, H * 0.62); x += widths[i] + gap; });
-  // a thin rule and a few vertical lines near the bottom, like the poster
-  g.fillRect(cx - 40, H * 0.67, 80, 2);
-  g.globalAlpha = 0.55;
-  for (let i = -5; i <= 5; i++) g.fillRect(cx + i * 14, H * 0.88, 2, 50 + (i % 2 ? 0 : 14));
-  g.globalAlpha = 1;
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  return tex;
+  g.moveTo(x0 + r, y0); g.lineTo(x1 - r, y0); g.arc(x1, y0, r, Math.PI, Math.PI / 2, true);
+  g.lineTo(x1, y1 - r); g.arc(x1, y1, r, -Math.PI / 2, Math.PI, true);
+  g.lineTo(x0 + r, y1); g.arc(x0, y1, r, 0, -Math.PI / 2, true);
+  g.lineTo(x0, y0 + r); g.arc(x0, y0, r, Math.PI / 2, 0, true);
+  g.closePath();
 }
+
+function paintCard(el) {
+  const c = el.canvas, W = c.width, H = c.height, g = c.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  g.save();
+  cardShape(g, W, H, 6, 70); g.clip();
+  g.fillStyle = el.bg; g.fillRect(0, 0, W, H);
+  // ink-wash feel: big soft pale and dark blotches, then fine paper grain
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * W, y = Math.random() * H, r = 60 + Math.random() * 160, grad = g.createRadialGradient(x, y, 0, x, y, r);
+    const light = Math.random() < 0.5;
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.10)' : 'rgba(20,35,35,0.07)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  for (let i = 0; i < 1800; i++) {
+    const x = Math.random() * W, y = Math.random() * H, len = 6 + Math.random() * 40;
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,' + (0.03 + Math.random() * 0.05) + ')' : 'rgba(0,0,0,' + (0.02 + Math.random() * 0.05) + ')';
+    g.fillRect(x, y, len, 1 + Math.random() * 1.2);
+  }
+  // the big brush character as the background of the card
+  g.fillStyle = 'rgba(18, 28, 26, 0.86)'; g.font = '400 ' + Math.round(H * 0.56) + 'px ' + BRUSH; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(el.zh, W / 2, H * 0.42);
+  g.restore();
+  // English word, letter by letter so it is spaced out
+  g.font = '500 46px ' + SERIF; g.fillStyle = INK; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+  const gap = 18, widths = [...el.word].map((ch) => g.measureText(ch).width);
+  let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1)) / 2;
+  [...el.word].forEach((ch, i) => { g.fillText(ch, x, H * 0.885); x += widths[i] + gap; });
+  // gold outline: a thick outer line and a thin inner line
+  const gold = g.createLinearGradient(0, 0, W, H); gold.addColorStop(0, GOLD_A); gold.addColorStop(0.5, GOLD_B); gold.addColorStop(1, GOLD_A);
+  g.strokeStyle = gold; g.lineWidth = 7; cardShape(g, W, H, 7, 70); g.stroke();
+  g.lineWidth = 2.5; cardShape(g, W, H, 22, 56); g.stroke();
+  el.tex.needsUpdate = true;
+}
+function drawCard(el) {
+  el.canvas = document.createElement('canvas'); el.canvas.width = 512; el.canvas.height = Math.round(512 * CARD_H / CARD_W);
+  el.tex = new THREE.CanvasTexture(el.canvas); el.tex.colorSpace = THREE.SRGBColorSpace; el.tex.anisotropy = 4;
+  paintCard(el);
+  return el.tex;
+}
+// the fonts come from the network: once they have arrived, paint every card again
+Promise.all([document.fonts.load('600px "Zhi Mang Xing"', '金木水火土'), document.fonts.load('46px "Playfair Display"', 'METALWODFIREARTH')])
+  .then(() => ELEMENTS.forEach(paintCard)).catch(() => {});
 
 const cards = new THREE.Group();
 scene.add(cards);
@@ -537,6 +550,10 @@ function setCaption(main, cue = '') {
 }
 const _head = new THREE.Vector3(), _dir = new THREE.Vector3(), _capTarget = new THREE.Vector3();
 function followHead(dt) {
+  if (phase === 'cards') {   // on the cards the text hangs fixed in the middle of the view, a little below the cards
+    caption.scale.set(1.5, 0.47, 1); caption.position.set(0, 0.32, -2.3); caption.userData.placed = false; return;
+  }
+  caption.scale.set(1.8, 0.5625, 1);
   camera.getWorldPosition(_head); camera.getWorldDirection(_dir); _dir.y = 0; if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, -1); _dir.normalize();
   _capTarget.copy(_head).addScaledVector(_dir, 2.2); _capTarget.y = _head.y - 0.5;
   if (!caption.userData.placed) { caption.position.copy(_capTarget); caption.userData.placed = true; }
@@ -626,7 +643,7 @@ function updateWood(dt) {
    ===================================================================== */
 // In VR a pinch of thumb and forefinger counts as a "select", exactly like pressing a controller trigger,
 // and the hand has a pointing ray, so one piece of code handles both. Hand tracking must be switched on in the Quest settings.
-let hover = null, sel = null;
+let hover = null, sel = null, lastHover = null, capHold = 0;   // capHold: the caption is busy (welcome, notice) until this time
 const FLOAT = 0.07;   // metres the cards rise and fall; raise it for a stronger float
 const mouse = { ndc: new THREE.Vector2(), on: false };
 function cardUnder(origin, direction) {
@@ -637,7 +654,7 @@ function cardUnder(origin, direction) {
 function chooseCard(card) {
   if (sel || phase !== 'cards' || !card) return;
   audioInit();
-  if (card.userData.id !== 'wood') { setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
+  if (card.userData.id !== 'wood') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
   sel = { card, t: 0 };
   setCaption('', '');
 }
@@ -655,6 +672,10 @@ function updateCards(dt) {
       ray.setFromCamera(mouse.ndc, camera); ray.far = 12;
       const h = ray.intersectObjects(cards.children, false)[0]; hover = h ? h.object : null;
     }
+  }
+  if (hover !== lastHover) {   // under the cards, the card you point at is described in a line of text
+    lastHover = hover;
+    if (time >= capHold && !sel) setCaption(hover ? ELEMENTS.find((e) => e.id === hover.userData.id).note : '', '');
   }
   for (const c of cards.children) {
     if (c === (sel && sel.card)) continue;
@@ -713,7 +734,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 let welcomed = false;
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. When you are ready, choose a card with a pinch.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 9000); }, 3000);
+  capHold = time + 12; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. When you are ready, choose a card with a pinch.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 9000); }, 3000);
 }
 
 /* =====================================================================
