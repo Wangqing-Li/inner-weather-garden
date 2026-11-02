@@ -158,8 +158,8 @@ scene.add(mist);
 /* =====================================================================
    PART 2: five element cards, drawn on a 2D canvas (like p5.js) and hung in an arc around the viewer
    ===================================================================== */
-// sizes are in metres: a card 0.7 m wide and 1.575 m tall hangs 3.0 m away, about 26 degrees apart (halfway between the first two versions)
-const CARD_W = 0.7, CARD_H = 1.575, ARC_R = 3.0, ARC_STEP = 26 * Math.PI / 180, EYE = 1.5;
+// sizes are in metres: a card 0.8 m wide and 1.8 m tall hangs 2.4 m away, 30 degrees apart (the first version)
+const CARD_W = 0.8, CARD_H = 1.8, ARC_R = 2.4, ARC_STEP = 30 * Math.PI / 180, EYE = 1.5;
 // left to right; Wood is in the middle because it is the first one we build
 const ELEMENTS = [
   { id: 'metal', word: 'METAL', zh: '金', bg: '#6b5740', fg: '#d9c89a', shape: 'triangle' },
@@ -305,7 +305,7 @@ scene.add(marker);
 
 // Scene scale: the scan is shown at SCENE_SCALE times its recorded size, shrunk around the standing point so your feet stay on the ground.
 // (?scale=0.6 in the link, or the slider in the garden preview.)
-let SCENE_SCALE = 1.5;
+let SCENE_SCALE = 1.0;   // 1 = the scan at its recorded size, as in the first version
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
