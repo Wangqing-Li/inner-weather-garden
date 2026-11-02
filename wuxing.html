@@ -36,7 +36,7 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Zhi+Mang+Xing&text=%E9%87%91%E6%9C%A8%E6%B0%B4%E7%81%AB%E5%9C%9F&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&text=%E9%87%91%E6%9C%A8%E6%B0%B4%E7%81%AB%E5%9C%9F&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500&text=ABCDEFGHIJKLMNOPQRSTUVWXYZ&display=swap" rel="stylesheet">
 <script type="importmap">
 {
@@ -165,40 +165,94 @@ scene.add(mist);
 // sizes are in metres: a card 0.8 m wide and 1.8 m tall hangs 2.4 m away, 30 degrees apart (the first version)
 const CARD_W = 0.8, CARD_H = 1.8, ARC_R = 2.4, ARC_STEP = 30 * Math.PI / 180, EYE = 1.5;
 // left to right; Wood is in the middle because it is the first one we build.
-// Card colours: the first (lightest) colour of each set on the traditional colour poster. Fire has no red set on it, so it takes the warm brown from the orange set.
-const INK = '#1d2b2a', GOLD_A = '#e6c675', GOLD_B = '#b8892f';
+// Card colours: the second colour of each set on the colour posters (Water, Wood, Metal), plus a softened black for Earth and a softened red for Fire.
+const GOLD_A = '#e6c675', GOLD_B = '#b8892f';
 const ELEMENTS = [
-  { id: 'metal', word: 'METAL', zh: '金', bg: '#E2E1E4', note: 'Clarity and stillness. A bell that settles the room.' },
-  { id: 'water', word: 'WATER', zh: '水', bg: '#8BA3C7', note: 'Flow and release. Ripples that slowly settle.' },
-  { id: 'wood',  word: 'WOOD',  zh: '木', bg: '#A6BAB1', note: 'Growth and breath. Bamboo reaching toward the light.' },
-  { id: 'fire',  word: 'FIRE',  zh: '火', bg: '#BC6E37', note: 'Focus and warmth. A single flame to rest your eyes on.' },
-  { id: 'earth', word: 'EARTH', zh: '土', bg: '#DDB078', note: 'Grounding and stability. Solid stone beneath you.' },
+  { id: 'metal', word: 'METAL', zh: '金', bg: '#CECCD6', dark: false, note: 'Clarity and stillness. A bell that settles the room.' },
+  { id: 'water', word: 'WATER', zh: '水', bg: '#003D74', dark: true,  note: 'Flow and release. Ripples that slowly settle.' },
+  { id: 'wood',  word: 'WOOD',  zh: '木', bg: '#819D8E', dark: false, note: 'Growth and breath. Bamboo reaching toward the light.' },
+  { id: 'fire',  word: 'FIRE',  zh: '火', bg: '#A5473E', dark: true,  note: 'Focus and warmth. A single flame to rest your eyes on.' },
+  { id: 'earth', word: 'EARTH', zh: '土', bg: '#3A3735', dark: true,  note: 'Grounding and stability. Solid stone beneath you.' },
 ];
-const BRUSH = '"Zhi Mang Xing", "Xingkai SC", "STXingkai", "Kaiti SC", serif';   // a brush-script font from Google Fonts, loaded in <head>
+const BRUSH = '"Ma Shan Zheng", "Xingkai SC", "STXingkai", "Kaiti SC", serif';   // a bold brush font from Google Fonts, loaded in <head>
 const SERIF = '"Playfair Display", "Didot", Georgia, serif';                      // high-contrast serif for the English word
 
-// The card outline: a rectangle whose four corners are bitten out by quarter circles, like the window shapes on the poster.
-function cardShape(g, W, H, inset, r) {
-  const x0 = inset, y0 = inset, x1 = W - inset, y1 = H - inset;
+// The card outline, like the window shapes on the poster: the top and bottom edges rise in a gentle arch, and the four corners are bitten out by quarter circles.
+function cardShape(g, W, H, inset, r, peak) {
+  const x0 = inset, y0 = inset, x1 = W - inset, y1 = H - inset, mx = W / 2;
   g.beginPath();
-  g.moveTo(x0 + r, y0); g.lineTo(x1 - r, y0); g.arc(x1, y0, r, Math.PI, Math.PI / 2, true);
+  g.moveTo(x0 + r, y0); g.quadraticCurveTo(mx, y0 - 2 * peak, x1 - r, y0);
+  g.arc(x1, y0, r, Math.PI, Math.PI / 2, true);
   g.lineTo(x1, y1 - r); g.arc(x1, y1, r, -Math.PI / 2, Math.PI, true);
-  g.lineTo(x0 + r, y1); g.arc(x0, y1, r, 0, -Math.PI / 2, true);
+  g.quadraticCurveTo(mx, y1 + 2 * peak, x0 + r, y1);
+  g.arc(x0, y1, r, 0, -Math.PI / 2, true);
   g.lineTo(x0, y0 + r); g.arc(x0, y0, r, Math.PI / 2, 0, true);
   g.closePath();
+}
+
+// Faint ink-wash decoration along the top of each card, in the same tone as the background (pale on dark cards, dark on light ones).
+function drawDecor(g, el, W, H) {
+  const t = el.dark ? '238,232,215' : '28,48,42';
+  const A = (a) => 'rgba(' + t + ',' + a + ')';
+  if ('filter' in g) g.filter = 'blur(3px)';
+  const leaf = (x, y, len, w, ang, a) => {
+    g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = A(a);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(len * 0.5, -w, len, 0); g.quadraticCurveTo(len * 0.5, w, 0, 0); g.fill(); g.restore();
+  };
+  if (el.id === 'wood') {                       // bamboo leaves hanging from the top corners
+    [[30, 50, 200, 28, 0.95, .34], [70, 40, 220, 30, 1.25, .26], [100, 80, 180, 26, 0.7, .30], [40, 110, 160, 22, 1.5, .22],
+     [W - 30, 60, 210, 28, 2.2, .32], [W - 70, 40, 220, 30, 1.9, .24], [W - 100, 90, 170, 26, 2.45, .28], [W / 2, 30, 150, 20, 1.6, .18]]
+      .forEach((l) => leaf(...l));
+  } else if (el.id === 'fire') {                // a setting sun with a few thin clouds
+    const sx = W * 0.5, sy = H * 0.19, grad = g.createRadialGradient(sx, sy, 0, sx, sy, 150);
+    grad.addColorStop(0, 'rgba(255,215,170,0.55)'); grad.addColorStop(1, 'rgba(255,200,150,0)');
+    g.fillStyle = grad; g.fillRect(sx - 150, sy - 150, 300, 300);
+    g.fillStyle = 'rgba(255,225,190,0.7)'; g.beginPath(); g.arc(sx, sy, 46, 0, Math.PI * 2); g.fill();
+    g.fillStyle = A(0.22); [[0.14, 120], [0.23, 200], [0.29, 90]].forEach(([yy, w], i) => g.fillRect(W * 0.5 - w / 2 + (i - 1) * 50, H * yy, w, 5));
+  } else if (el.id === 'earth') {               // weathered garden rocks: three lumpy shapes
+    g.fillStyle = A(0.2);
+    [[W * 0.28, H * 0.26, 110, 120], [W * 0.62, H * 0.27, 130, 160], [W * 0.82, H * 0.26, 70, 90]].forEach(([cx, base, w, h]) => {
+      g.beginPath(); g.moveTo(cx - w / 2, base);
+      g.quadraticCurveTo(cx - w * 0.55, base - h * 0.5, cx - w * 0.2, base - h * 0.8);
+      g.quadraticCurveTo(cx, base - h * 1.05, cx + w * 0.2, base - h * 0.7);
+      g.quadraticCurveTo(cx + w * 0.55, base - h * 0.4, cx + w / 2, base); g.closePath(); g.fill();
+    });
+    g.fillStyle = A(0.3); [[W * 0.58, H * 0.2], [W * 0.66, H * 0.17], [W * 0.27, H * 0.2]].forEach(([x, y]) => { g.beginPath(); g.ellipse(x, y, 9, 15, 0.4, 0, Math.PI * 2); g.fill(); });
+  } else if (el.id === 'water') {               // ripples spreading on the surface
+    g.lineWidth = 2.5;
+    for (let k = 0; k < 6; k++) { g.strokeStyle = A(0.34 - k * 0.05); g.beginPath(); g.ellipse(W / 2, H * 0.2, 36 + k * 34, 12 + k * 11, 0, 0, Math.PI * 2); g.stroke(); }
+  } else {                                      // metal: a bronze singing bowl with sound arcs
+    const cx = W / 2, cy = H * 0.2;
+    g.fillStyle = A(0.2); g.beginPath(); g.moveTo(cx - 85, cy); g.quadraticCurveTo(cx - 80, cy + 90, cx, cy + 92); g.quadraticCurveTo(cx + 80, cy + 90, cx + 85, cy); g.closePath(); g.fill();
+    g.strokeStyle = A(0.35); g.lineWidth = 3; g.beginPath(); g.ellipse(cx, cy, 85, 18, 0, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = 2; for (let k = 0; k < 3; k++) { g.strokeStyle = A(0.22 - k * 0.05); g.beginPath(); g.arc(cx, cy + 20, 120 + k * 26, -2.3, -0.84); g.stroke(); }
+  }
+  if ('filter' in g) g.filter = 'none';
+}
+
+// Waves along the bottom edge (the "seigaiha" pattern from the poster): overlapping semicircle scales, drawn from the back row forward.
+function drawWaves(g, W, H, bg, dark) {
+  g.lineWidth = 1.6; g.strokeStyle = 'rgba(230,198,117,0.75)';
+  for (let row = 0; row < 3; row++) {
+    for (let col = -1; col < 10; col++) {
+      const cx = col * 62 + (row % 2) * 31, cy = H - 60 + row * 22;
+      g.fillStyle = bg; g.beginPath(); g.arc(cx, cy, 31, Math.PI, 0); g.fill();
+      for (const r of [31, 23, 15, 7]) { g.beginPath(); g.arc(cx, cy, r, Math.PI, 0); g.stroke(); }
+    }
+  }
 }
 
 function paintCard(el) {
   const c = el.canvas, W = c.width, H = c.height, g = c.getContext('2d');
   g.clearRect(0, 0, W, H);
   g.save();
-  cardShape(g, W, H, 6, 70); g.clip();
+  cardShape(g, W, H, 26, 54, 12); g.clip();
   g.fillStyle = el.bg; g.fillRect(0, 0, W, H);
   // ink-wash feel: big soft pale and dark blotches, then fine paper grain
   for (let i = 0; i < 26; i++) {
     const x = Math.random() * W, y = Math.random() * H, r = 60 + Math.random() * 160, grad = g.createRadialGradient(x, y, 0, x, y, r);
     const light = Math.random() < 0.5;
-    grad.addColorStop(0, light ? 'rgba(255,255,255,0.10)' : 'rgba(20,35,35,0.07)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
   }
   for (let i = 0; i < 1800; i++) {
@@ -206,19 +260,22 @@ function paintCard(el) {
     g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,' + (0.03 + Math.random() * 0.05) + ')' : 'rgba(0,0,0,' + (0.02 + Math.random() * 0.05) + ')';
     g.fillRect(x, y, len, 1 + Math.random() * 1.2);
   }
+  drawDecor(g, el, W, H);
   // the big brush character as the background of the card
-  g.fillStyle = 'rgba(18, 28, 26, 0.86)'; g.font = '400 ' + Math.round(H * 0.56) + 'px ' + BRUSH; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText(el.zh, W / 2, H * 0.42);
+  const inkFill = el.dark ? 'rgba(244,238,222,0.9)' : 'rgba(18,28,26,0.88)', inkSolid = el.dark ? '#f4eede' : '#1d2b2a';
+  g.fillStyle = inkFill; g.font = '400 ' + Math.round(H * 0.46) + 'px ' + BRUSH; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(el.zh, W / 2, H * 0.5);
+  drawWaves(g, W, H, el.bg, el.dark);
   g.restore();
   // English word, letter by letter so it is spaced out
-  g.font = '500 46px ' + SERIF; g.fillStyle = INK; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+  g.font = '500 44px ' + SERIF; g.fillStyle = inkSolid; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
   const gap = 18, widths = [...el.word].map((ch) => g.measureText(ch).width);
   let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1)) / 2;
-  [...el.word].forEach((ch, i) => { g.fillText(ch, x, H * 0.885); x += widths[i] + gap; });
+  [...el.word].forEach((ch, i) => { g.fillText(ch, x, H * 0.80); x += widths[i] + gap; });
   // gold outline: a thick outer line and a thin inner line
   const gold = g.createLinearGradient(0, 0, W, H); gold.addColorStop(0, GOLD_A); gold.addColorStop(0.5, GOLD_B); gold.addColorStop(1, GOLD_A);
-  g.strokeStyle = gold; g.lineWidth = 7; cardShape(g, W, H, 7, 70); g.stroke();
-  g.lineWidth = 2.5; cardShape(g, W, H, 22, 56); g.stroke();
+  g.strokeStyle = gold; g.lineWidth = 7; cardShape(g, W, H, 26, 54, 12); g.stroke();
+  g.lineWidth = 2.5; cardShape(g, W, H, 42, 42, 10); g.stroke();
   el.tex.needsUpdate = true;
 }
 function drawCard(el) {
@@ -228,7 +285,7 @@ function drawCard(el) {
   return el.tex;
 }
 // the fonts come from the network: once they have arrived, paint every card again
-Promise.all([document.fonts.load('600px "Zhi Mang Xing"', '金木水火土'), document.fonts.load('46px "Playfair Display"', 'METALWODFIREARTH')])
+Promise.all([document.fonts.load('600px "Ma Shan Zheng"', '金木水火土'), document.fonts.load('46px "Playfair Display"', 'METALWODFIREARTH')])
   .then(() => ELEMENTS.forEach(paintCard)).catch(() => {});
 
 const cards = new THREE.Group();
