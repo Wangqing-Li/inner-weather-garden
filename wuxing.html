@@ -64,7 +64,7 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
     </div>
   </header>
   <footer class="bottom">
-    <div class="status panel garden-only" id="scaleBox">Scene scale <input type="range" id="scale" min="0.3" max="1.2" step="0.01"> <b id="scaleVal"></b></div>
+    <div class="status panel garden-only" id="scaleBox">Scene scale <input type="range" id="scale" min="0.3" max="3" step="0.01"> <b id="scaleVal"></b></div>
     <div class="status panel" id="status">Loading scan...</div>
     <div id="vrSlot"></div>
   </footer>
@@ -158,8 +158,8 @@ scene.add(mist);
 /* =====================================================================
    PART 2: five element cards, drawn on a 2D canvas (like p5.js) and hung in an arc around the viewer
    ===================================================================== */
-// sizes are in metres: a card 0.6 m wide and 1.35 m tall hangs 3.6 m away, about 22 degrees apart
-const CARD_W = 0.6, CARD_H = 1.35, ARC_R = 3.6, ARC_STEP = 22 * Math.PI / 180, EYE = 1.5;
+// sizes are in metres: a card 0.7 m wide and 1.575 m tall hangs 3.0 m away, about 26 degrees apart (halfway between the first two versions)
+const CARD_W = 0.7, CARD_H = 1.575, ARC_R = 3.0, ARC_STEP = 26 * Math.PI / 180, EYE = 1.5;
 // left to right; Wood is in the middle because it is the first one we build
 const ELEMENTS = [
   { id: 'metal', word: 'METAL', zh: '金', bg: '#6b5740', fg: '#d9c89a', shape: 'triangle' },
@@ -305,7 +305,7 @@ scene.add(marker);
 
 // Scene scale: the scan is shown at SCENE_SCALE times its recorded size, shrunk around the standing point so your feet stay on the ground.
 // (?scale=0.6 in the link, or the slider in the garden preview.)
-let SCENE_SCALE = 0.5;
+let SCENE_SCALE = 1.5;
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
