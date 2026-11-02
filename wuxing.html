@@ -440,6 +440,7 @@ function makeBody(withHands) {
   g.userData = { torso, head };
   return g;
 }
+const SHOW_BODY = false;   // the box-shaped body looked odd; off until we have a proper figure (a glTF model)
 const body = makeBody();
 body.visible = false;
 scene.add(body);
@@ -448,6 +449,7 @@ reference.visible = false;
 scene.add(reference);
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
 function updateBody(dt) {
+  if (!SHOW_BODY) return;
   body.visible = phase !== 'cards' && phase !== 'garden' || (phase === 'garden' && renderer.xr.isPresenting);
   if (!body.visible) return;
   camera.getWorldPosition(_head); camera.getWorldDirection(_bf);
@@ -459,7 +461,7 @@ function updateBody(dt) {
   body.userData.torso.position.y = headH - 0.55; body.userData.head.visible = false;
 }
 // small ghost spheres on the controllers, so the hands are visible when you hold them
-for (const i of [0, 1]) {
+for (const i of SHOW_BODY ? [0, 1] : []) {
   const grip = renderer.xr.getControllerGrip(i);
   grip.add(new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 10), new THREE.MeshBasicMaterial({ color: 0xc9d6d1, transparent: true, opacity: 0.7 })));
   rig.add(grip);
