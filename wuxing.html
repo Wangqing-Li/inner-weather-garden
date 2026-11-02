@@ -434,7 +434,7 @@ const rayLine = new THREE.Line(
 );
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
 function teleportFrom(ctrl) {
-  if (phase !== 'garden') return;
+  if (phase !== 'garden' && phase !== 'wood') return;
   ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
   ray.set(_o, _d); ray.far = 40;
   const hit = ray.intersectObject(scan)[0];
@@ -451,7 +451,7 @@ const WALK_SPEED = 1.4;
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _from = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
 let groundClock = 0;
 function walk(dt) {
-  if (phase !== 'garden') return;
+  if (phase !== 'garden' && phase !== 'wood') return;
   const session = renderer.xr.getSession();
   if (!session) return;
   for (const src of session.inputSources) {
@@ -566,36 +566,28 @@ new GLTFLoader().load('assets/body.glb', (gltf) => {
 const reference = makeBody();                  // a 1.7 m person standing at the start point, only in the desktop overview
 reference.visible = false;
 scene.add(reference);
-// Ground ripples: a faint standing circle under your feet, and a ring that spreads out each time you breathe out.
-const rippleTex = (() => {
+// Standing circle: a pale disc under your feet with a clear outer edge that fades to nothing toward the middle.
+// With each breath the whole circle follows the breathing: it forms during the in-breath, then spreads outward as one ring and vanishes during the out-breath.
+const ringTex = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 256;
   const g = c.getContext('2d'), grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
-  grad.addColorStop(0, 'rgba(215,235,228,0)'); grad.addColorStop(0.72, 'rgba(215,235,228,0)'); grad.addColorStop(0.88, 'rgba(215,235,228,0.9)'); grad.addColorStop(0.96, 'rgba(215,235,228,0.25)'); grad.addColorStop(1, 'rgba(215,235,228,0)');
+  grad.addColorStop(0, 'rgba(220,238,232,0)'); grad.addColorStop(0.5, 'rgba(220,238,232,0.04)'); grad.addColorStop(0.93, 'rgba(220,238,232,0.7)'); grad.addColorStop(0.975, 'rgba(220,238,232,0.8)'); grad.addColorStop(0.985, 'rgba(220,238,232,0)');
   g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
   return new THREE.CanvasTexture(c);
 })();
-function makeRing() {
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: rippleTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
-  m.renderOrder = 14; m.visible = false; m.frustumCulled = false; scene.add(m); return m;
-}
-const standRing = makeRing(), rippleRings = [makeRing(), makeRing(), makeRing(), makeRing()];
+const standRing = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
+standRing.renderOrder = 14; standRing.visible = false; standRing.frustumCulled = false; scene.add(standRing);
+const ringState = { mode: 'idle', k: 0 };   // set by the Wood session: 'in' / 'out' with progress k from 0 to 1
 const _floor = new THREE.Vector3();
-function spawnRipple() {
-  const r = rippleRings.find((m) => !m.visible) || rippleRings[0];
-  r.userData.age = 0; r.position.copy(_floor); r.visible = true;
-}
 function updateRipples(dt, on) {
-  standRing.visible = on; rippleRings.forEach((r) => { if (!on) r.visible = false; });
+  standRing.visible = on;
   if (!on) return;
-  standRing.position.copy(_floor); standRing.scale.setScalar(1.25 * bodyScale.v);
-  standRing.material.opacity = 0.28 + 0.07 * Math.sin(time * 1.1);
-  for (const r of rippleRings) {
-    if (!r.visible) continue;
-    r.userData.age += dt; const k = r.userData.age / 5;
-    if (k >= 1) { r.visible = false; continue; }
-    r.scale.setScalar(lerp(0.8, 7, 1 - (1 - k) * (1 - k)));
-    r.material.opacity = 0.6 * Math.pow(1 - k, 1.5);
-  }
+  const ease = (k) => k * k * (3 - 2 * k);
+  let scale = 1, op = 0.4;
+  if (ringState.mode === 'in') { op = 0.45 * ease(ringState.k); }
+  else if (ringState.mode === 'out') { const e = ease(ringState.k); scale = lerp(1, 4.5, e); op = 0.45 * Math.pow(1 - e, 1.2); }
+  standRing.position.copy(_floor); standRing.scale.setScalar(1.25 * bodyScale.v * scale);
+  standRing.material.opacity = op;
 }
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
 const handMeshes = [];   // [{ obj, parent }]
@@ -750,15 +742,15 @@ const TIMELINE = [
   { t: 190, voice: 'closing',      text: 'Take one more slow breath. When you are ready, let the garden fade, and return.' },
   { t: 200, run: () => bowl(0.5) },
 ];
-let woodSession = null, prevInhale = false;
+let woodSession = null;
 function startWood() {
-  woodSession = { t: 0, next: 0, textUntil: 0 }; prevInhale = false; setTimeout(() => { if (woodSession) spawnRipple(); }, 800);
+  woodSession = { t: 0, next: 0, textUntil: 0 };
   particles.position.copy(rig.position); particles.visible = true; particleMat.opacity = 0;
   audioInit(); windLevel(0.05, 6);
   playReveal(14);
 }
 function endWood() {
-  woodSession = null; stopVoices(); setCaption('', ''); particles.visible = false; windLevel(0, 3);
+  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; windLevel(0, 3);
   revealProgress.value = 0.02; reveal = null;
   setPhase('cards');
 }
@@ -782,8 +774,9 @@ function updateWood(dt) {
   const { b, inhale } = breathAt(s.t);
   if (amp > 0.01) setCaption(capMain, inhale ? 'breathe in' : 'breathe out'); else if (capCue) setCaption(capMain, '');
   particleMat.opacity = 0.9 * amp;
-  if (prevInhale && !inhale && amp > 0.3) spawnRipple();   // a ring spreads over the ground at the start of each out-breath
-  prevInhale = inhale;
+  const tc = (((s.t - BREATH_START) % (BREATH_IN + BREATH_OUT)) + BREATH_IN + BREATH_OUT) % (BREATH_IN + BREATH_OUT);
+  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
+  particles.position.copy(rig.position);   // the particles go where you go
   const pull = 0.82 * b * amp;                      // 0 = particles at home, 1 = at your head
   for (let i = 0; i < P_N; i++) {
     const sway = Math.sin(time * 0.7 + pSeed[i] * 40) * 0.18 * (1 - b * amp);
@@ -982,7 +975,7 @@ renderer.setAnimationLoop((now) => {
   }
   updateNearMist(dt);
   if (phase === 'cards') updateCards(dt);
-  else if (phase === 'wood') updateWood(dt);
+  else if (phase === 'wood') { updateWood(dt); walk(dt); }
   else { walk(dt); controls.update(); }
   if (phase !== 'garden') followHead(dt);
   updateBody(dt);
