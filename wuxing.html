@@ -102,7 +102,8 @@ const rig = new THREE.Group();
 rig.add(camera);
 scene.add(rig);
 
-const spark = new SparkRenderer({ renderer });
+// maxPixelRadius caps how big a single splat may be on screen; very close splats (looking down at the ground) are the heaviest to draw
+const spark = new SparkRenderer({ renderer, maxPixelRadius: 160 });
 scene.add(spark);
 
 // 'cards' = misty room with five cards, 'wood' = the Wood meditation (scan appears out of the mist),
@@ -146,7 +147,7 @@ const mist = new THREE.Mesh(
           // cos and sin of the angle make the noise wrap around smoothly, so there is no seam behind your head
           float hgt = 0.12 - fk * 0.04 + 0.12 * n3(vec3(cos(az), sin(az), fk * 0.7) * (2.6 + fk * 1.1));
           vec3 rc = k == 0 ? vec3(0.17, 0.27, 0.27) : (k == 1 ? vec3(0.10, 0.18, 0.19) : vec3(0.05, 0.10, 0.11));
-          col = mix(col, rc, smoothstep(hgt + 0.01, hgt - 0.01, d.y));
+          col = mix(col, rc, 1.0 - smoothstep(hgt - 0.01, hgt + 0.01, d.y));   // edges in rising order: the reverse is undefined in GLSL and some headsets turn it black
         }` : ''}
         // slow drifting mist: noise that is bent by more noise, moving a little each frame
         vec3 q = d * 2.2 + vec3(time * 0.02, time * 0.005, -time * 0.015);
@@ -565,6 +566,37 @@ new GLTFLoader().load('assets/body.glb', (gltf) => {
 const reference = makeBody();                  // a 1.7 m person standing at the start point, only in the desktop overview
 reference.visible = false;
 scene.add(reference);
+// Ground ripples: a faint standing circle under your feet, and a ring that spreads out each time you breathe out.
+const rippleTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(215,235,228,0)'); grad.addColorStop(0.72, 'rgba(215,235,228,0)'); grad.addColorStop(0.88, 'rgba(215,235,228,0.9)'); grad.addColorStop(0.96, 'rgba(215,235,228,0.25)'); grad.addColorStop(1, 'rgba(215,235,228,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+function makeRing() {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: rippleTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
+  m.renderOrder = 14; m.visible = false; m.frustumCulled = false; scene.add(m); return m;
+}
+const standRing = makeRing(), rippleRings = [makeRing(), makeRing(), makeRing(), makeRing()];
+const _floor = new THREE.Vector3();
+function spawnRipple() {
+  const r = rippleRings.find((m) => !m.visible) || rippleRings[0];
+  r.userData.age = 0; r.position.copy(_floor); r.visible = true;
+}
+function updateRipples(dt, on) {
+  standRing.visible = on; rippleRings.forEach((r) => { if (!on) r.visible = false; });
+  if (!on) return;
+  standRing.position.copy(_floor); standRing.scale.setScalar(1.25 * bodyScale.v);
+  standRing.material.opacity = 0.28 + 0.07 * Math.sin(time * 1.1);
+  for (const r of rippleRings) {
+    if (!r.visible) continue;
+    r.userData.age += dt; const k = r.userData.age / 5;
+    if (k >= 1) { r.visible = false; continue; }
+    r.scale.setScalar(lerp(0.8, 7, 1 - (1 - k) * (1 - k)));
+    r.material.opacity = 0.6 * Math.pow(1 - k, 1.5);
+  }
+}
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
 const handMeshes = [];   // [{ obj, parent }]
 function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.renderOrder = 15; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
@@ -586,6 +618,8 @@ function updateBody(dt) {
     body.rotation.y = bodyYaw; body.scale.setScalar(bodyScale.v);
     body.position.set(_head.x + Math.sin(bodyYaw) * 0.05, rig.position.y, _head.z + Math.cos(bodyYaw) * 0.05);
   }
+  _floor.set(_head.x, rig.position.y + 0.03, _head.z);
+  updateRipples(dt, body.visible);
   // hands: one piece on each controller grip, or on each wrist joint when hand tracking is used
   if (!renderer.xr.isPresenting || !bodyParts.left) return;
   for (const i of [0, 1]) {
@@ -716,9 +750,9 @@ const TIMELINE = [
   { t: 190, voice: 'closing',      text: 'Take one more slow breath. When you are ready, let the garden fade, and return.' },
   { t: 200, run: () => bowl(0.5) },
 ];
-let woodSession = null;
+let woodSession = null, prevInhale = false;
 function startWood() {
-  woodSession = { t: 0, next: 0, textUntil: 0 };
+  woodSession = { t: 0, next: 0, textUntil: 0 }; prevInhale = false; setTimeout(() => { if (woodSession) spawnRipple(); }, 800);
   particles.position.copy(rig.position); particles.visible = true; particleMat.opacity = 0;
   audioInit(); windLevel(0.05, 6);
   playReveal(14);
@@ -748,6 +782,8 @@ function updateWood(dt) {
   const { b, inhale } = breathAt(s.t);
   if (amp > 0.01) setCaption(capMain, inhale ? 'breathe in' : 'breathe out'); else if (capCue) setCaption(capMain, '');
   particleMat.opacity = 0.9 * amp;
+  if (prevInhale && !inhale && amp > 0.3) spawnRipple();   // a ring spreads over the ground at the start of each out-breath
+  prevInhale = inhale;
   const pull = 0.82 * b * amp;                      // 0 = particles at home, 1 = at your head
   for (let i = 0; i < P_N; i++) {
     const sway = Math.sin(time * 0.7 + pSeed[i] * 40) * 0.18 * (1 - b * amp);
