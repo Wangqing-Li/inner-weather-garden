@@ -550,15 +550,15 @@ new GLTFLoader().load('assets/body.glb', (gltf) => {
   if (!src) return;
   src.updateWorldMatrix(true, false);
   const g = src.geometry.clone().applyMatrix4(src.matrixWorld);   // the model faces +z, stands on y = 0, arms out along x (a T pose)
-  // lower legs and feet: everything below the knee (about 0.45 m), fading out over the shin
-  bodyParts.legs = cutPart(g, (m) => m.y < 0.46, (x, y) => 1 - smoothstep3(0.16, 0.40, y)).rotateY(Math.PI);   // turn the toes to -z, forward in three.js
+  // lower legs and feet: solid up to about 0.40 m, fading out around the knee (0.45 to 0.58 m)
+  bodyParts.legs = cutPart(g, (m) => m.y < 0.60, (x, y) => 1 - smoothstep3(0.40, 0.58, y)).rotateY(Math.PI);   // turn the toes to -z, forward in three.js
   // hand and forearm for each side: x beyond 0.36 m on the arm line, fading in over the forearm; moved so the hand is at the origin and the fingers point to -z
   for (const side of [1, -1]) {
     const part = cutPart(g, (m) => m.y > 1.0 && m.x * side > 0.36, (x) => smoothstep3(0.38, 0.52, x * side));
     part.translate(-side * 0.69, -1.27, -0.04); part.rotateY(side * Math.PI / 2);
     bodyParts[side > 0 ? 'left' : 'right'] = part;   // facing +z, the character's left hand is at +x
   }
-  const legs = new THREE.Mesh(bodyParts.legs, ghostMat); legs.frustumCulled = false;
+  const legs = new THREE.Mesh(bodyParts.legs, ghostMat); legs.frustumCulled = false; legs.renderOrder = 15;   // drawn after the mist, so it never flickers behind it
   body.add(legs); body.userData.legs = legs;
 });
 
@@ -567,9 +567,10 @@ reference.visible = false;
 scene.add(reference);
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
 const handMeshes = [];   // [{ obj, parent }]
-function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
+function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.renderOrder = 15; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
 for (const i of [0, 1]) {
   rig.add(renderer.xr.getControllerGrip(i));
+  rig.add(renderer.xr.getHand(i));   // the hand object must be in the scene, or its wrist joint never moves
   const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
   const note = (e) => { ctrl.userData.side = e.data.handedness; ctrl.userData.isHand = !!e.data.hand; };
   ctrl.addEventListener('connected', note);
