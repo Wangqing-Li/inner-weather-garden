@@ -30,6 +30,8 @@ button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
 .bottom { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .status { padding: 7px 12px; border-radius: 999px; font-size: 12px; color: var(--ink-dim); }
 .garden-only { display: none; }
+.credit { pointer-events: auto; font-size: 11px; }
+.credit a { color: var(--ink); }
 input[type=range] { pointer-events: auto; vertical-align: middle; }
 #vr { position: static !important; }
 @media (max-width: 520px) { .status { display: none; } }
@@ -70,6 +72,7 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
   <footer class="bottom">
     <div class="status panel garden-only" id="scaleBox">Scene scale <input type="range" id="scale" min="0.3" max="3" step="0.01"> <b id="scaleVal"></b></div>
     <div class="status panel" id="status">Loading scan...</div>
+    <div class="status panel credit" id="credit">Body model: <a href="https://sketchfab.com/3d-models/lowpoly-female-body-stylized-57e2dbcff0db468db02ac712eae59070" target="_blank" rel="noopener">Lowpoly Female Body Stylized</a> by Rafasilart, CC BY-NC. Cut into legs and hands.</div>
     <div id="vrSlot"></div>
   </footer>
 </main>
@@ -79,6 +82,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const $ = (id) => document.getElementById(id);
@@ -510,31 +514,100 @@ function makeBody(withHands) {
   g.userData = { torso, head };
   return g;
 }
-const SHOW_BODY = false;   // the box-shaped body looked odd; off until we have a proper figure (a glTF model)
-const body = makeBody();
+// ---- your own legs and hands ----
+// Cut out of a free human model (assets/body.glb, one static mesh, no skeleton): lower legs with feet, and a hand with forearm for each side.
+// The cut ends fade out, so the pieces look like they dissolve into mist. The hands ride on the controllers (or on the wrist when you use hand tracking).
+const ghostMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false,
+  uniforms: { uColor: { value: new THREE.Color(0xd5e4de) }, uAlpha: { value: 0.55 } },
+  vertexShader: /* glsl */ `
+    attribute float aFade; varying float vFade; varying vec3 vN;
+    void main() { vFade = aFade; vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform vec3 uColor; uniform float uAlpha; varying float vFade; varying vec3 vN;
+    void main() {
+      float edge = 1.0 - abs(normalize(vN).z);          // brighter and more solid toward the outline, like a soft ghost
+      gl_FragColor = vec4(mix(uColor * 0.8, uColor * 1.1, edge), uAlpha * vFade * (0.4 + 0.6 * edge));
+    }
+  `,
+});
+const body = new THREE.Group();
 body.visible = false;
 scene.add(body);
+const bodyParts = { legs: null, left: null, right: null };   // geometries, filled once the model has loaded
+const bodyScale = { v: 1 };
+const smoothstep3 = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+// Keep only the triangles whose centre passes keep(), and give every vertex a fade value (0 = invisible, 1 = solid).
+function cutPart(geo, keep, fade) {
+  const pos = geo.attributes.position, nor = geo.attributes.normal, idx = geo.index;
+  const tris = idx ? idx.count / 3 : pos.count / 3;
+  const P = [], N = [], F = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let t = 0; t < tris; t++) {
+    const ids = idx ? [idx.getX(t * 3), idx.getX(t * 3 + 1), idx.getX(t * 3 + 2)] : [t * 3, t * 3 + 1, t * 3 + 2];
+    a.fromBufferAttribute(pos, ids[0]); b.fromBufferAttribute(pos, ids[1]); c.fromBufferAttribute(pos, ids[2]);
+    if (!keep(a.add(b).add(c).multiplyScalar(1 / 3))) continue;
+    for (const i of ids) { P.push(pos.getX(i), pos.getY(i), pos.getZ(i)); N.push(nor.getX(i), nor.getY(i), nor.getZ(i)); F.push(fade(pos.getX(i), pos.getY(i), pos.getZ(i))); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); g.setAttribute('aFade', new THREE.Float32BufferAttribute(F, 1));
+  return g;
+}
+new GLTFLoader().load('assets/body.glb', (gltf) => {
+  let src = null;
+  for (const sc of gltf.scenes) sc.traverse((o) => { if (o.isMesh && !src) src = o; });
+  if (!src) return;
+  src.updateWorldMatrix(true, false);
+  const g = src.geometry.clone().applyMatrix4(src.matrixWorld);   // the model faces +z, stands on y = 0, arms out along x (a T pose)
+  // lower legs and feet: everything below the knee (about 0.45 m), fading out over the shin
+  bodyParts.legs = cutPart(g, (m) => m.y < 0.46, (x, y) => 1 - smoothstep3(0.16, 0.40, y)).rotateY(Math.PI);   // turn the toes to -z, forward in three.js
+  // hand and forearm for each side: x beyond 0.36 m on the arm line, fading in over the forearm; moved so the hand is at the origin and the fingers point to -z
+  for (const side of [1, -1]) {
+    const part = cutPart(g, (m) => m.y > 1.0 && m.x * side > 0.36, (x) => smoothstep3(0.38, 0.52, x * side));
+    part.translate(-side * 0.69, -1.27, -0.04); part.rotateY(side * Math.PI / 2);
+    bodyParts[side > 0 ? 'left' : 'right'] = part;   // facing +z, the character's left hand is at +x
+  }
+  const legs = new THREE.Mesh(bodyParts.legs, ghostMat); legs.frustumCulled = false;
+  body.add(legs); body.userData.legs = legs;
+});
+
 const reference = makeBody();                  // a 1.7 m person standing at the start point, only in the desktop overview
 reference.visible = false;
 scene.add(reference);
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
-function updateBody(dt) {
-  if (!SHOW_BODY) return;
-  body.visible = phase !== 'cards' && phase !== 'garden' || (phase === 'garden' && renderer.xr.isPresenting);
-  if (!body.visible) return;
-  camera.getWorldPosition(_head); camera.getWorldDirection(_bf);
-  if (Math.hypot(_bf.x, _bf.z) > 0.35) { const target = Math.atan2(-_bf.x, -_bf.z); let d = target - bodyYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); bodyYaw += d * (1 - Math.exp(-dt * 6)); }
-  const headH = Math.max(0.9, _head.y - rig.position.y);
-  body.rotation.y = bodyYaw;
-  // stand slightly behind the head so the camera is never inside the chest
-  body.position.set(_head.x + Math.sin(bodyYaw) * 0.07, rig.position.y, _head.z + Math.cos(bodyYaw) * 0.07);
-  body.userData.torso.position.y = headH - 0.55; body.userData.head.visible = false;
+const handMeshes = [];   // [{ obj, parent }]
+function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
+for (const i of [0, 1]) {
+  rig.add(renderer.xr.getControllerGrip(i));
+  const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
+  const note = (e) => { ctrl.userData.side = e.data.handedness; ctrl.userData.isHand = !!e.data.hand; };
+  ctrl.addEventListener('connected', note);
 }
-// small ghost spheres on the controllers, so the hands are visible when you hold them
-for (const i of SHOW_BODY ? [0, 1] : []) {
-  const grip = renderer.xr.getControllerGrip(i);
-  grip.add(new THREE.Mesh(new THREE.SphereGeometry(0.04, 12, 10), new THREE.MeshBasicMaterial({ color: 0xc9d6d1, transparent: true, opacity: 0.7 })));
-  rig.add(grip);
+function updateBody(dt) {
+  camera.getWorldPosition(_head); camera.getWorldDirection(_bf);
+  const headH = Math.max(0.9, _head.y - rig.position.y);
+  bodyScale.v = clamp(headH / 1.56, 0.7, 1.35);   // the model's eyes are at about 1.56 m
+  // legs: only in the meditation (and in the desktop overview when in VR)
+  body.visible = !!body.userData.legs && (phase === 'wood' || (phase === 'garden' && renderer.xr.isPresenting));
+  if (body.visible) {
+    if (Math.hypot(_bf.x, _bf.z) > 0.35) { const target = Math.atan2(-_bf.x, -_bf.z); let d = target - bodyYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); bodyYaw += d * (1 - Math.exp(-dt * 6)); }
+    body.rotation.y = bodyYaw; body.scale.setScalar(bodyScale.v);
+    body.position.set(_head.x + Math.sin(bodyYaw) * 0.05, rig.position.y, _head.z + Math.cos(bodyYaw) * 0.05);
+  }
+  // hands: one piece on each controller grip, or on each wrist joint when hand tracking is used
+  if (!renderer.xr.isPresenting || !bodyParts.left) return;
+  for (const i of [0, 1]) {
+    const ctrl = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i), hand = renderer.xr.getHand(i), side = ctrl.userData.side;
+    if (!side || !ctrl.userData.connected) continue;
+    const key = side === 'left' ? 'left' : 'right';
+    if (!grip.userData.piece) { grip.userData.piece = handPiece(key); grip.add(grip.userData.piece); }
+    const wrist = hand.joints && hand.joints['wrist'];
+    if (wrist && !hand.userData.piece) { hand.userData.piece = handPiece(key); wrist.add(hand.userData.piece); }
+    if (grip.userData.piece) grip.userData.piece.visible = !ctrl.userData.isHand;
+    if (hand.userData.piece) hand.userData.piece.visible = !!ctrl.userData.isHand;
+  }
+  for (const m of handMeshes) m.scale.setScalar(bodyScale.v);
 }
 
 /* =====================================================================
@@ -869,7 +942,7 @@ window.addEventListener('resize', resize);
 resize();
 setPhase('cards');
 // ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
-{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); }
+{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); }   // ?pitch=-1.1 looks down
 
 let last = performance.now(), time = 0;
 const _cam = new THREE.Vector3();
