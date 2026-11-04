@@ -759,41 +759,49 @@ const particles = new THREE.Points(pGeo, particleMat);
 particles.frustumCulled = false; particles.visible = false;
 scene.add(particles);
 
-/* ---------- bamboo: faint, painted, half there; the leaves sway when you breathe out and some fall ---------- */
+/* ---------- bamboo: smooth pale stalks with thin branches and slender leaves, faint and half there ---------- */
 const USE_PARTICLES = false;   // the glowing breath particles from the first version; off now that the bamboo shows the breath
 const bamboo = new THREE.Group();
 bamboo.visible = false; scene.add(bamboo);
 
-// A stalk painted like a watercolour: lighter grey-green on the lit side, darker on the other, dry-brush streaks, and a dark joint with a pale gap above it.
+// A smooth stalk: light yellow-green on one side, darker on the other, with a thin pale ring at each joint.
 const stalkTex = (() => {
-  const c = document.createElement('canvas'); c.width = 128; c.height = 256;
+  const c = document.createElement('canvas'); c.width = 64; c.height = 256;
   const g = c.getContext('2d');
-  const lr = g.createLinearGradient(0, 0, 128, 0); lr.addColorStop(0, '#a9b898'); lr.addColorStop(0.3, '#6f8c4e'); lr.addColorStop(0.75, '#3f5e35'); lr.addColorStop(1, '#2c4429');
-  g.fillStyle = lr; g.fillRect(0, 0, 128, 256);
-  for (let i = 0; i < 260; i++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(235,240,215,0.10)' : 'rgba(20,35,20,0.12)'; g.fillRect(Math.random() * 128, Math.random() * 256, 1 + Math.random() * 2, 14 + Math.random() * 70); }
-  g.fillStyle = '#26371f'; g.fillRect(0, 214, 128, 30);      // the dark joint
-  g.fillStyle = 'rgba(40,60,30,0.6)'; g.fillRect(0, 244, 128, 4);
-  g.fillStyle = '#ece7d4'; g.fillRect(0, 248, 128, 8);       // pale gap
+  const lr = g.createLinearGradient(0, 0, 64, 0); lr.addColorStop(0, '#c2d287'); lr.addColorStop(0.35, '#98b955'); lr.addColorStop(0.8, '#6a9238'); lr.addColorStop(1, '#557a2c');
+  g.fillStyle = lr; g.fillRect(0, 0, 64, 256);
+  for (let i = 0; i < 80; i++) { g.fillStyle = 'rgba(255,255,230,0.05)'; g.fillRect(Math.random() * 64, Math.random() * 256, 1, 20 + Math.random() * 60); }
+  g.fillStyle = 'rgba(85,110,40,0.55)'; g.fillRect(0, 238, 64, 5);   // a little shadow above the joint
+  g.fillStyle = '#e6dba3'; g.fillRect(0, 243, 64, 5);                 // the thin pale ring
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 })();
-// A bunch of leaves painted as tapered brush strokes, two colour variants (green, olive); used on crossed planes.
-function leafBunchTexture(light, dark) {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const g = c.getContext('2d');
-  for (let k = 0; k < 9; k++) {
-    const ang = (-95 + k * 24 + (Math.random() - 0.5) * 14) * Math.PI / 180, len = 85 + Math.random() * 50, w = 12 + Math.random() * 9;
-    g.save(); g.translate(128, 200); g.rotate(ang + Math.PI * 0.12 * (k % 2 ? 1 : -1) * 0.3);
-    const grad = g.createLinearGradient(0, 0, 0, -len); grad.addColorStop(0, dark); grad.addColorStop(1, light);
-    g.fillStyle = grad; g.globalAlpha = 0.85;
-    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(w, -len * 0.45, 0, -len); g.quadraticCurveTo(-w, -len * 0.45, 0, 0); g.fill();
-    g.globalAlpha = 0.35; g.strokeStyle = dark; g.lineWidth = 1.3; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -len * 0.9); g.stroke();
-    g.restore();
-  }
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+
+// One leaf: a long thin pointed shape, darker at the base and lighter at the tip (colour stored per vertex).
+function slenderLeaf(len, wid, dark, light) {
+  const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(wid, len * 0.4, 0, len); sh.quadraticCurveTo(-wid, len * 0.4, 0, 0);
+  const g = new THREE.ShapeGeometry(sh, 4), pos = g.attributes.position, col = [];
+  const a = new THREE.Color(dark), b = new THREE.Color(light), c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) { c.copy(a).lerp(b, pos.getY(i) / len); col.push(c.r, c.g, c.b); }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
 }
-const leafTexA = leafBunchTexture('#a9bd62', '#3f6b34'), leafTexB = leafBunchTexture('#cdbd56', '#6d7f2c');
-// two planes crossed at right angles, so the bunch looks full from any side; origin at the base of the leaves
-const bunchGeo = mergeGeometries([new THREE.PlaneGeometry(1.9, 1.9).translate(0, 0.534, 0), new THREE.PlaneGeometry(1.9, 1.9).translate(0, 0.534, 0).rotateY(Math.PI / 2)]);
+// One branch: a thin twig along +x with leaf pairs along it and one at the tip, all merged into one mesh. Several random variants are made and shared.
+function makeBranchGeo() {
+  const L = 0.9 + Math.random() * 0.5, parts = [];
+  const stem = new THREE.CylinderGeometry(0.004, 0.009, L, 4, 1).translate(0, L / 2, 0).rotateZ(-Math.PI / 2);
+  const sc = []; for (let i = 0; i < stem.attributes.position.count; i++) sc.push(0.5, 0.6, 0.3);
+  stem.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3)); parts.push(stem);
+  const dark = Math.random() < 0.5 ? '#4b7a25' : '#5d8a2a', light = Math.random() < 0.5 ? '#a8c957' : '#c4d46a';
+  for (const t of [0.3, 0.5, 0.7, 0.9]) {
+    for (const side of [1, -1]) {
+      const g = slenderLeaf(0.42 + Math.random() * 0.2, 0.05 + Math.random() * 0.03, dark, light);
+      g.rotateZ(-Math.PI / 2).rotateY(side * (0.5 + Math.random() * 0.4)).rotateZ(-0.15 - Math.random() * 0.3).translate(t * L, 0, 0); parts.push(g);
+    }
+  }
+  const tip = slenderLeaf(0.5, 0.06, dark, light); tip.rotateZ(-Math.PI / 2).rotateZ(-0.2).translate(L, 0, 0); parts.push(tip);
+  return mergeGeometries(parts);
+}
+const branchGeos = [makeBranchGeo(), makeBranchGeo(), makeBranchGeo(), makeBranchGeo()];
 
 // Where the bamboo grows, in metres, with you at the origin looking along -z toward the pavilion. Two or three tall stalks gathered on each side,
 // one or two small ones standing alone; the strip straight ahead is left empty so the view to the pavilion stays clear.
@@ -805,37 +813,46 @@ const GROVE = [
 const stalks = [];
 for (const [x, z, H0] of GROVE) {
   const g = new THREE.Group(); g.position.set(x, 0, z);
+  const tall = H0 > 5, rad = tall ? 0.075 : 0.05;
   const mat = new THREE.MeshBasicMaterial({ map: stalkTex.clone(), transparent: true, opacity: 0, depthWrite: false }); mat.map.needsUpdate = true;
-  mat.map.repeat.set(1, H0 / 0.7);
-  const rad = H0 > 5 ? 0.1 : 0.06;
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.75, rad, H0, 10, 1, true).translate(0, H0 / 2, 0), mat); trunk.frustumCulled = false; trunk.renderOrder = 11; g.add(trunk);
-  const leafMat = new THREE.MeshBasicMaterial({ map: Math.random() < 0.55 ? leafTexA : leafTexB, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-  const fr = H0 > 5 ? [0.5, 0.62, 0.74, 0.86, 0.98] : [0.7, 0.88, 1.0];
-  const clusters = fr.map((f, j) => {
-    const c = new THREE.Mesh(bunchGeo, leafMat); c.position.y = H0 * f; c.rotation.y = Math.random() * 6;
-    c.scale.setScalar(H0 > 5 ? 1 : 0.75); c.userData = { seed: Math.random() * 10 + j }; c.renderOrder = 12; c.frustumCulled = false; g.add(c); return c;
-  });
+  mat.map.repeat.set(1, H0 / 0.9);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.8, rad, H0, 12, 1, true).translate(0, H0 / 2, 0), mat); trunk.frustumCulled = false; trunk.renderOrder = 11; g.add(trunk);
+  const leafMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const n = tall ? 8 : 4, clusters = [];
+  for (let k = 0; k < n; k++) {
+    const f = tall ? 0.45 + 0.53 * k / (n - 1) : 0.6 + 0.4 * k / (n - 1);
+    const b = new THREE.Mesh(branchGeos[Math.floor(Math.random() * branchGeos.length)], leafMat);
+    b.position.y = H0 * f; b.rotation.y = k * 2.4 + Math.random() * 1.2;   // each branch points a different way around the stalk
+    const tilt = 0.4 + Math.random() * 0.5; b.rotation.z = tilt; b.scale.setScalar(tall ? 1 : 0.8);
+    b.userData = { seed: Math.random() * 10 + k, tilt }; b.renderOrder = 12; b.frustumCulled = false; g.add(b); clusters.push(b);
+  }
   g.userData = { H0, trunk, leafMat, clusters, seed: Math.random() * 10 };
   bamboo.add(g); stalks.push(g);
 }
+// Far, very faint pale stalks like the blurred shadows in the reference: tall, wide, almost not there, no leaves.
+const shadowStalks = [[-8.5, -10, 12], [8.8, -9, 12], [-6.2, -14, 14], [6.8, -13, 14]].map(([x, z, H]) => {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, H, 10, 1, true).translate(0, H / 2, 0), new THREE.MeshBasicMaterial({ color: 0xaec4a6, transparent: true, opacity: 0, depthWrite: false }));
+  m.position.set(x, 0, z); m.renderOrder = 10; m.frustumCulled = false; m.userData = { seed: Math.random() * 10 }; bamboo.add(m); return m;
+});
 let swayAmt = 0;   // 0..1, follows the out-breath
 function updateBamboo(opacity) {
   for (const g of stalks) {
     const { trunk, leafMat, clusters, seed } = g.userData;
     const flick = 0.65 + 0.35 * Math.sin(time * 0.35 + seed);   // each stalk slowly appears and half fades, "now you see it, now you don't"
-    trunk.material.opacity = 0.5 * flick * opacity; leafMat.opacity = 0.7 * flick * opacity;
-    for (const c of clusters) {
-      const wave = Math.sin(time * 2.4 + c.userData.seed * 3), wave2 = Math.cos(time * 1.9 + c.userData.seed * 2);
-      c.rotation.x = 0.03 * Math.sin(time * 0.8 + c.userData.seed) + swayAmt * 0.2 * wave;   // nearly still on the in-breath, a clear sway on the out-breath
-      c.rotation.z = swayAmt * 0.18 * wave2;
+    trunk.material.opacity = 0.55 * flick * opacity; leafMat.opacity = 0.8 * flick * opacity;
+    for (const b of clusters) {
+      const wave = Math.sin(time * 2.6 + b.userData.seed * 3), wave2 = Math.cos(time * 2.0 + b.userData.seed * 2);
+      b.rotation.z = b.userData.tilt + 0.012 * Math.sin(time * 0.8 + b.userData.seed) + swayAmt * 0.13 * wave;   // almost still on the in-breath, a clear sway on the out-breath
+      b.rotation.x = swayAmt * 0.12 * wave2;
     }
   }
+  for (const m of shadowStalks) m.material.opacity = 0.11 * (0.6 + 0.4 * Math.sin(time * 0.25 + m.userData.seed)) * opacity;
 }
-// Falling leaves: single leaves that let go of the bamboo during the out-breath and drift down.
-const fallGeo = (() => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(0.06, 0.15, 0, 0.36); sh.quadraticCurveTo(-0.06, 0.15, 0, 0); return new THREE.ShapeGeometry(sh, 3); })();
+// Falling leaves: single slender leaves that let go during the out-breath and drift down.
+const fallGeo = slenderLeaf(0.42, 0.045, '#5d8a2a', '#b9cf62');
 const fallLeaves = [];
 for (let i = 0; i < 40; i++) {
-  const m = new THREE.Mesh(fallGeo, new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0x8fae5a : 0xb7b055, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  const m = new THREE.Mesh(fallGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
   m.visible = false; m.renderOrder = 13; m.frustumCulled = false; m.userData = { ph: Math.random() * 6, vy: 0.35 + Math.random() * 0.25, spin: (Math.random() - 0.5) * 2.5 };
   bamboo.add(m); fallLeaves.push(m);
 }
@@ -854,7 +871,7 @@ function updateFalling(dt, opacity) {
     const u = m.userData; u.age += dt;
     m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.2 + u.ph) * 0.3 * dt; m.position.z += Math.cos(time * 0.9 + u.ph) * 0.25 * dt;
     m.rotation.z += u.spin * dt; m.rotation.x = Math.sin(time * 1.7 + u.ph) * 0.9;
-    m.material.opacity = 0.75 * opacity * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
+    m.material.opacity = 0.8 * opacity * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
     if (m.position.y < 0.05) m.visible = false;
   }
 }
