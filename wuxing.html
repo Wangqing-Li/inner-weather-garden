@@ -384,9 +384,9 @@ scan.initialized
 /* ---------- picking, teleporting and walking (used in the garden, next steps) ---------- */
 const ray = new THREE.Raycaster();
 const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
-// Fire: you stand on the arch bridge at (-21.5, 27.4), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.2 m away.
+// Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
 // The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
-const FIRE_START = new THREE.Vector3(-21.5, -0.85, 27.44), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
+const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
 const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the lantern
@@ -629,6 +629,39 @@ for (const i of [0, 1]) {
   const note = (e) => { ctrl.userData.side = e.data.handedness; ctrl.userData.isHand = !!e.data.hand; };
   ctrl.addEventListener('connected', note);
 }
+// With hand tracking the hand is drawn from the 25 joints the headset reports: a ball at every joint and a tapered tube between neighbours,
+// so the fingers bend as yours do (the model's hand is one stiff mesh and cannot).
+const HAND_FINGERS = ['thumb', 'index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'];
+const HAND_CHAINS = HAND_FINGERS.map((f) => ['wrist', ...(f === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'] : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip']).map((n) => f + '-' + n)]);
+const handBoneMat = new THREE.MeshBasicMaterial({ color: 0xe9e2d8, transparent: true, opacity: 0.55, depthWrite: false });
+const boneGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true), ballGeo = new THREE.SphereGeometry(1, 8, 6);
+const _hA = new THREE.Vector3(), _hB = new THREE.Vector3(), _hUp = new THREE.Vector3(0, 1, 0);
+function updateJointHand(i) {
+  const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
+  if (!hand.joints) return;
+  if (!hand.userData.skin) {
+    const grp = new THREE.Group(); grp.renderOrder = 15; scene.add(grp);
+    const bones = [], balls = {};
+    for (const chain of HAND_CHAINS) for (let k = 0; k < chain.length; k++) {
+      if (!balls[chain[k]]) { const m = new THREE.Mesh(ballGeo, handBoneMat); m.renderOrder = 15; m.frustumCulled = false; grp.add(m); balls[chain[k]] = m; }
+      if (k) { const m = new THREE.Mesh(boneGeo, handBoneMat); m.renderOrder = 15; m.frustumCulled = false; grp.add(m); bones.push([m, chain[k - 1], chain[k]]); }
+    }
+    hand.userData.skin = { grp, bones, balls };
+  }
+  const { grp, bones, balls } = hand.userData.skin, wrist = hand.joints['wrist'];
+  grp.visible = !!(ctrl.userData.isHand && wrist && wrist.visible);
+  if (!grp.visible) return;
+  for (const name in balls) { const j = hand.joints[name]; if (!j) continue; j.getWorldPosition(_hA); balls[name].position.copy(_hA); balls[name].scale.setScalar((j.jointRadius || 0.008) * 1.1); }
+  for (const [m, a, b] of bones) {
+    const ja = hand.joints[a], jb = hand.joints[b]; if (!ja || !jb) continue;
+    ja.getWorldPosition(_hA); jb.getWorldPosition(_hB);
+    const len = _hA.distanceTo(_hB); if (len < 1e-4) continue;
+    m.position.copy(_hA).add(_hB).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(_hUp, _hB.sub(_hA).normalize());
+    const r = ((ja.jointRadius || 0.008) + (jb.jointRadius || 0.008)) * 0.5 * 1.05;
+    m.scale.set(r, len, r);
+  }
+}
 function updateBody(dt) {
   camera.getWorldPosition(_head); camera.getWorldDirection(_bf);
   const headH = Math.max(0.9, _head.y - rig.position.y);
@@ -642,17 +675,16 @@ function updateBody(dt) {
   }
   _floor.set(_head.x, rig.position.y + 0.03, _head.z);
   updateRipples(dt, body.visible);
-  // hands: one piece on each controller grip, or on each wrist joint when hand tracking is used
-  if (!renderer.xr.isPresenting || !bodyParts.left) return;
+  if (!renderer.xr.isPresenting) return;
+  for (const i of [0, 1]) updateJointHand(i);
+  // hands on controllers: one piece on each controller grip (with hand tracking the jointed hand above is used instead)
+  if (!bodyParts.left) return;
   for (const i of [0, 1]) {
     const ctrl = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i), hand = renderer.xr.getHand(i), side = ctrl.userData.side;
     if (!side || !ctrl.userData.connected) continue;
     const key = side === 'left' ? 'left' : 'right';
     if (!grip.userData.piece) { grip.userData.piece = handPiece(key); grip.add(grip.userData.piece); }
-    const wrist = hand.joints && hand.joints['wrist'];
-    if (wrist && !hand.userData.piece) { hand.userData.piece = handPiece(key); wrist.add(hand.userData.piece); }
     if (grip.userData.piece) grip.userData.piece.visible = !ctrl.userData.isHand;
-    if (hand.userData.piece) hand.userData.piece.visible = !!ctrl.userData.isHand;
   }
   for (const m of handMeshes) m.scale.setScalar(bodyScale.v);
 }
