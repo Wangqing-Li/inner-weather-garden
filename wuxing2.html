@@ -766,6 +766,10 @@ function audioInit() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   actx = new (window.AudioContext || window.webkitAudioContext)();
   master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
+  // the spoken lines go through a gain of 2.2 and a soft limiter, so the voice sits clearly above the wind, rain and chimes without distorting
+  voiceGain = actx.createGain(); voiceGain.gain.value = 2.2;
+  const limiter = actx.createDynamicsCompressor(); limiter.threshold.value = -10; limiter.ratio.value = 8; limiter.attack.value = 0.003; limiter.release.value = 0.25;
+  voiceGain.connect(limiter).connect(master);
   // wind through bamboo: white noise, filtered, with its loudness slowly swelling and fading
   const len = actx.sampleRate * 4, buf = actx.createBuffer(1, len, actx.sampleRate), data = buf.getChannelData(0);
   for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
@@ -817,8 +821,13 @@ function bowl(vol = 0.5) {
 }
 // the spoken lines are plain audio files made with a computer voice for now; swap in your own recordings with the same file names
 const voices = {};
+let voiceGain = null;
 function say(name) {
-  const a = voices[name] || (voices[name] = new Audio('assets/audio/' + name + '.m4a'));
+  let a = voices[name];
+  if (!a) {
+    a = voices[name] = new Audio('assets/audio/' + name + '.m4a');
+    if (actx && voiceGain) { try { actx.createMediaElementSource(a).connect(voiceGain); } catch (e) { /* plays without the boost */ } }
+  }
   a.currentTime = 0; a.play().catch(() => {});
 }
 function stopVoices() { Object.values(voices).forEach((a) => a.pause()); }
@@ -1002,16 +1011,21 @@ function updateFalling(dt, opacity) {
 // The common structure of every element (from the script doc): arrival, the breath introduction, a guide, then simple cues, with 3 seconds between lines.
 // Breathing is 4 s in, 2 s hold, 6 s out. Everything that moves (leaves, lights, rain, birds, chimes) appears when "Bring your awareness to your breath" begins.
 const BREATH_IN = 4, BREATH_HOLD = 2, BREATH_OUT = 6, BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT;
-const V2_DUR = { arrival: 11.7, breath_intro: 4.3 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
-const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // 17.7 s: "Bring your awareness to your breath"
-let breathStart = V2_BREATH_AT;
-const V2_CUE_AT = V2_BREATH_AT + 2 * BREATH_CYCLE, V2_CUES = 6;      // the guide (13 s) ends before this; then "Inhale... hold... exhale..." for 6 cycles
-const V2_END = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3 + 21;           // 138 s
+const V2_DUR = { arrival: 16.9, breath_intro: 6.3 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
+const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // "Bring your awareness to your breath": the leaves, lights, rain, birds and the ground ring begin here
+const V2_GUIDE_AT = V2_BREATH_AT + V2_DUR.breath_intro + 3 + 0.8;    // the start of the first guided breath; every breath cycle is counted from here
+let breathStart = V2_GUIDE_AT;
+const V2_CUE_AT = V2_GUIDE_AT + 2 * BREATH_CYCLE, V2_CUES = 6;       // after the guide, "Inhale... hold... exhale..." for 6 cycles
+const V2_END = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3 + 21;
 function v2Timeline(element) {
-  const tl = [{ t: 0, run: () => bowl(0.5) }, { t: 3, voice: 'arrival' }, { t: V2_BREATH_AT, voice: 'breath_intro' }, { t: V2_BREATH_AT + V2_DUR.breath_intro + 3, voice: 'guide_' + element }];
+  const O = V2_GUIDE_AT;
+  const tl = [{ t: 0, run: () => bowl(0.5) }, { t: 3, voice: 'arrival' }, { t: V2_BREATH_AT, voice: 'breath_intro' },
+    { t: O - 0.8, voice: 'g1_' + element },                  // "Inhale deeply, watching ..."  (with the in-breath)
+    { t: O + BREATH_IN, voice: 'g_hold' },                   // "Hold it..."
+    { t: O + BREATH_IN + 1.6, voice: 'g_exhale' },           // "And exhale completely, releasing any tension..."
+    { t: O + 15.7, voice: 'g4_' + element }];                // "With every breath, you are drawing the energy of ... into your core."
   for (let c = 0; c < V2_CUES; c++) { const t0 = V2_CUE_AT + c * BREATH_CYCLE; tl.push({ t: t0, voice: 'cue_in' }, { t: t0 + BREATH_IN, voice: 'cue_hold' }, { t: t0 + BREATH_IN + BREATH_HOLD, voice: 'cue_out' }); }
-  const tEnd = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3;
-  tl.push({ t: tEnd, voice: 'closing' }, { t: tEnd + 8.2, run: () => bowl(0.45) });
+  tl.push({ t: V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3, run: () => bowl(0.45) });
   return tl;
 }
 const SESSION_END = V2_END;
@@ -1019,7 +1033,7 @@ const SESSION_END = V2_END;
 const TIMELINE = v2Timeline('wood');
 let woodSession = null;
 function startWood() {
-  woodSession = { t: 0, next: 0, nextBird: V2_BREATH_AT + 3 }; breathStart = V2_BREATH_AT;
+  woodSession = { t: 0, next: 0, nextBird: V2_BREATH_AT + 3 }; breathStart = V2_GUIDE_AT;
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));   // ?skip=60 starts the meditation 60 s in (for testing)
   if (skip > 0) { woodSession.t = skip; while (woodSession.next < TIMELINE.length && TIMELINE[woodSession.next].t < skip) woodSession.next++; woodSession.nextBird = skip + 5; }
   faceWorldYaw(VR_YAW);   // turn the rig so that, whichever way you were physically facing, you look toward the pavilion
@@ -1052,7 +1066,7 @@ function updateWood(dt) {
     if (ev.voice) say(ev.voice);
   }
   // the guide fades in after BREATH_START and fades out before the end
-  const amp = smooth01((s.t - breathStart) / 6) * (1 - smooth01((s.t - (SESSION_END - 24)) / 10));
+  const amp = smooth01((s.t - V2_BREATH_AT) / 6) * (1 - smooth01((s.t - (SESSION_END - 24)) / 10));
   const { inhale, mode, k } = breathAt(s.t);
   if (amp > 0.02) {
     ringState.mode = mode === 'out' ? 'out' : 'in'; ringState.k = k;
@@ -1061,9 +1075,9 @@ function updateWood(dt) {
     rustleLevel(inhale ? 0.08 : 0.08 + 0.5 * swayAmt);
   } else { ringState.mode = 'idle'; swayAmt += (0 - swayAmt) * (1 - Math.exp(-dt / 1.3)); }
   // the bamboo fades in with the reveal and out at the end
-  const vis = smooth01((s.t - breathStart) / 5) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8));   // the bamboo and the falling leaves appear with the breath
+  const vis = smooth01((s.t - V2_BREATH_AT) / 5) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8));   // the bamboo and the falling leaves appear with the breath
   updateBamboo(vis); updateFalling(dt, vis);
-  if (s.t > s.nextBird && s.t > breathStart) { chirp(); if (Math.random() < 0.5) setTimeout(chirp, 700 + Math.random() * 900); s.nextBird = s.t + 7 + Math.random() * 9; }
+  if (s.t > s.nextBird && s.t > V2_BREATH_AT) { chirp(); if (Math.random() < 0.5) setTimeout(chirp, 700 + Math.random() * 900); s.nextBird = s.t + 7 + Math.random() * 9; }
   if (USE_PARTICLES) {
     const { b } = breathAt(s.t);
     particleMat.opacity = 0.9 * amp; particles.position.copy(rig.position);
@@ -1200,7 +1214,7 @@ function chime(vol = 0.05) {
 }
 
 function startFire() {
-  fireSession = { t: 0, next: 0, nextChime: V2_BREATH_AT + 6 }; breathStart = V2_BREATH_AT;
+  fireSession = { t: 0, next: 0, nextChime: V2_BREATH_AT + 6 }; breathStart = V2_GUIDE_AT;
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
   if (skip > 0) { fireSession.t = skip; while (fireSession.next < FIRE_TIMELINE.length && FIRE_TIMELINE[fireSession.next].t < skip) fireSession.next++; fireSession.nextChime = Math.max(skip, V2_BREATH_AT) + 3; }
   faceWorldYaw(FIRE_YAW);
@@ -1221,11 +1235,11 @@ function updateFire(dt) {
   const s = fireSession; if (!s) return;
   s.t += dt;
   while (s.next < FIRE_TIMELINE.length && s.t >= FIRE_TIMELINE[s.next].t) { const ev = FIRE_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
-  const amp = smooth01((s.t - breathStart) / 6) * (1 - smooth01((s.t - (FIRE_END - 24)) / 10));
+  const amp = smooth01((s.t - V2_BREATH_AT) / 6) * (1 - smooth01((s.t - (FIRE_END - 24)) / 10));
   const { b, inhale, mode, k: bk } = breathAt(s.t);
   if (amp > 0.02) { ringState.mode = mode === 'out' ? 'out' : 'in'; ringState.k = bk; } else ringState.mode = 'idle';
   fireOut += ((amp > 0.02 && !inhale ? 1 : 0) - fireOut) * (1 - Math.exp(-dt / 1.8));   // eased out-breath strength
-  fireVis = smooth01((s.t - breathStart) / 5) * (1 - smooth01((s.t - (FIRE_END - 10)) / 8));   // the lantern, the glow, the embers and the leaves appear with the breath
+  fireVis = smooth01((s.t - V2_BREATH_AT) / 5) * (1 - smooth01((s.t - (FIRE_END - 10)) / 8));   // the lantern, the glow, the embers and the leaves appear with the breath
   const ghost = 0.62 + 0.38 * Math.sin(time * 0.32 + 1.3);   // the lantern slowly half fades and returns, like the bamboo
   for (const [m, full] of fireFade) m.opacity = full * fireVis * ghost;
   // the glow follows the breath: brighter on the in-breath, softer on the out-breath, with a flame-like flicker
@@ -1340,7 +1354,7 @@ function dropOnWater() {   // a drop somewhere on the water in front of you
   if (Math.random() < 0.7) plink(clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) * 0.8, -0.8, 0.8), 0.035 / (1 + dist * 0.15));
 }
 function startWater() {
-  waterSession = { t: 0, next: 0 }; breathStart = V2_BREATH_AT;
+  waterSession = { t: 0, next: 0 }; breathStart = V2_GUIDE_AT;
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
   if (skip > 0) { waterSession.t = skip; while (waterSession.next < WATER_TIMELINE.length && WATER_TIMELINE[waterSession.next].t < skip) waterSession.next++; }
   faceWorldYaw(WATER_YAW);
@@ -1362,12 +1376,12 @@ function updateWater(dt) {
   const s = waterSession; if (!s) return;
   s.t += dt;
   while (s.next < WATER_TIMELINE.length && s.t >= WATER_TIMELINE[s.next].t) { const ev = WATER_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
-  const amp = smooth01((s.t - breathStart) / 6) * (1 - smooth01((s.t - (WATER_END - 24)) / 10));
+  const amp = smooth01((s.t - V2_BREATH_AT) / 6) * (1 - smooth01((s.t - (WATER_END - 24)) / 10));
   const { inhale, mode, k: bk } = breathAt(s.t);
   if (amp > 0.02) { ringState.mode = mode === 'out' ? 'out' : 'in'; ringState.k = bk; } else ringState.mode = 'idle';
   waterOut += ((amp > 0.02 && !inhale ? 1 : 0) - waterOut) * (1 - Math.exp(-dt / 1.8));
   const waterEnd = 1 - smooth01((s.t - (WATER_END - 10)) / 8);
-  waterVis = smooth01((s.t - breathStart) / 5) * waterEnd;   // the rain, the drops and the rings appear with the breath; the still surface is there from the start
+  waterVis = smooth01((s.t - V2_BREATH_AT) / 5) * waterEnd;   // the rain, the drops and the rings appear with the breath; the still surface is there from the start
   waterU.uTime.value = time; waterU.uVis.value = Math.max(waterVis, 0.55 * waterEnd);
   if (waterVis > 0.05) waterAcc += dt * (1.6 + 2.4 * waterOut);   // a few drops always, more on the out-breath
   while (waterAcc >= 1) { waterAcc -= 1; dropOnWater(); }
@@ -1446,7 +1460,7 @@ function cardUnder(origin, direction) {
 function chooseCard(card) {
   if (sel || phase !== 'cards' || !card) return;
   audioInit();
-  if (card.userData.id !== 'wood' && card.userData.id !== 'fire' && card.userData.id !== 'water') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
+  if (card.userData.id !== 'wood' && card.userData.id !== 'fire' && card.userData.id !== 'water') return;   // Metal and Earth have no scene yet
   sel = { card, t: 0 };
   setCaption('', ''); endWelcome(); say('go_' + card.userData.id);   // "The portal opens. Now let us seek the power of ..."
 }
@@ -1467,7 +1481,6 @@ function updateCards(dt) {
   }
   if (hover !== lastHover) {   // under the cards, the card you point at is described in a line of text
     lastHover = hover;
-    if (time >= capHold && !sel) setCaption(hover ? ELEMENTS.find((e) => e.id === hover.userData.id).note : '', '');
   }
   for (const c of cards.children) {
     const u = c.userData, ph = time * 0.55 + u.phase, chosen = sel && c === sel.card;
@@ -1545,12 +1558,12 @@ let welcomed = false;
 let welcomeTimers = [];
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  capHold = time + 22;
-  // the voice is 15 s; the first two sentences are about 43% of it, so the gesture sentences appear at about 6.5 s
+  capHold = time + 28;
+  // the voice is 21.6 s; the first two sentences are about 43% of it, so the gesture sentences appear at about 9.4 s
   welcomeTimers.push(setTimeout(() => {
     say('welcome_v2'); setCaption('Welcome to the Wuxing Meridian. Look around, trust your intuition, and select the card that calls to you today.', '');
-    welcomeTimers.push(setTimeout(() => setCaption('To choose a card, pinch it with your thumb and forefinger. To leave a scene at any time, press your palms together for three seconds.', ''), 6500));
-    welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 15500));
+    welcomeTimers.push(setTimeout(() => setCaption('To choose a card, pinch it with your thumb and forefinger. To leave a scene at any time, press your palms together for three seconds.', ''), 9400));
+    welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 22500));
   }, 3000));
 }
 // choosing a card ends the welcome: the text is already gone, the voice fades over 1.5 s and does not carry into the session
