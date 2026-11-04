@@ -384,9 +384,9 @@ scan.initialized
 /* ---------- picking, teleporting and walking (used in the garden, next steps) ---------- */
 const ray = new THREE.Raycaster();
 const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
-// Fire: you stand in the middle of the arch bridge at (-21.1, 26.6) and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.2 m away.
-// The bridge top is higher than the walkway floor (-1.2): y = 0.0 is a first guess. ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
-const FIRE_START = new THREE.Vector3(-21.1, 0.0, 26.6), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.4;
+// Fire: you stand on the arch bridge at (-21.5, 27.4), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.2 m away.
+// The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
+const FIRE_START = new THREE.Vector3(-21.5, -0.85, 27.44), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
 const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the lantern
@@ -1006,7 +1006,8 @@ const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); l
 const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
 for (const y of [-0.17, 0, 0.17]) { const r = 0.26 * Math.sqrt(1 - (y / 0.34) ** 2); const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.007, 6, 28).rotateX(Math.PI / 2), goldMat); ring.position.y = y; lantern.add(ring); }
 for (const y of [0.36, -0.36]) { const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.05, 14), darkMat); cap.position.y = y; lantern.add(cap); }
-const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1.4, 4), darkMat); cord.position.y = 0.38 + 0.7; lantern.add(cord);
+// the cord is 14 short pieces whose opacity falls from full at the lantern to zero at the top, so it dissolves into the air instead of ending in a hard line
+for (let i = 0; i < 14; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 4), fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95 * (1 - (i + 0.5) / 14))); seg.position.y = 0.38 + 0.05 + i * 0.1; lantern.add(seg); }
 const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.025, 0.4, 6), lanternMat); tassel.position.y = -0.6; lantern.add(tassel);
 const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
 const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
