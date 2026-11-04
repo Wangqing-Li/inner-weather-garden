@@ -63,6 +63,7 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
       <button type="button" id="phCards" aria-pressed="true">Cards</button>
       <button type="button" id="phWood" aria-pressed="false">Wood session</button>
       <button type="button" id="phFire" aria-pressed="false">Fire session</button>
+      <button type="button" id="phWater" aria-pressed="false">Water session</button>
       <button type="button" id="phGarden" aria-pressed="false">Garden (preview)</button>
       <button type="button" id="replay" class="garden-only">Replay reveal</button>
       <button type="button" id="pick" class="garden-only" aria-pressed="false">Pick VR start</button>
@@ -373,7 +374,7 @@ scan.updateGenerator();
 let reveal = null;
 function playReveal(seconds = 10, centre = VR_START) {
   revealCX.value = centre.x; revealCY.value = -centre.z;
-  reveal = { t: 0, dur: seconds }; revealProgress.value = 0.02; scan.updateVersion();
+  reveal = { t: 0, dur: seconds }; revealProgress.value = 0.02; scan.updateVersion(); if (refl) refl.updateVersion(); if (refl) refl.updateVersion();
 }
 
 let scanReady = false;
@@ -390,6 +391,29 @@ const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THR
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
 const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the lantern
+// Water: you stand at the lake edge at (-28.8, 5.1) and look across the water toward the garden centre. The scan has no water, so the surface is made here:
+// WATER_DROP metres below your feet (a first guess). ?water=x,y,z moves where you stand, ?waterDrop= lowers or raises the surface.
+const WATER_START = new THREE.Vector3(-28.8, -0.95, 5.1); let WATER_DROP = 0.45;
+{ const q = new URLSearchParams(location.search).get('water'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) WATER_START.set(x, y, z); } }
+{ const d = parseFloat(new URLSearchParams(location.search).get('waterDrop')); if (Number.isFinite(d)) WATER_DROP = d; }
+const WATER_YAW = Math.atan2(-(GARDEN.x - WATER_START.x), -(GARDEN.z - WATER_START.z));
+const waterWorldY = () => WATER_START.y - WATER_DROP * SCENE_SCALE;   // the scene grows around your feet, so the surface moves with it
+// The reflection: a second copy of the scan, flipped upside down about the water surface and dimmed, seen through the water. It shares the splat data, so it costs
+// drawing time but little memory. ?reflect=0 in the link turns it off if the headset struggles.
+const reflGroup = new THREE.Group(); reflGroup.visible = false; scene.add(reflGroup);
+let refl = null;
+function syncReflection() {
+  reflGroup.position.y = 2 * waterWorldY();
+  if (refl) { refl.scale.copy(scan.scale); refl.position.copy(scan.position); }
+}
+if (new URLSearchParams(location.search).get('reflect') !== '0') {
+  scan.initialized.then(() => {
+    refl = new SplatMesh({ packedSplats: scan.packedSplats });
+    refl.objectModifier = scan.objectModifier; refl.updateGenerator();
+    refl.rotation.x = -Math.PI / 2; refl.opacity = 0.5;
+    reflGroup.scale.y = -1; reflGroup.add(refl); syncReflection(); window.refl = refl;
+  });
+}
 let VR_YAW = Math.atan2(-(GARDEN.x - VR_START.x), -(GARDEN.z - VR_START.z));
 const marker = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf08a4b, depthTest: false }));
 marker.renderOrder = 10; marker.visible = false;
@@ -403,8 +427,9 @@ let SCENE_SCALE = 1.2;   // 1 = the scan at its recorded size
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
-  const pv = phase === 'fire' ? FIRE_START : VR_START;   // the scene grows around the point where you stand
+  const pv = phase === 'fire' ? FIRE_START : phase === 'water' ? WATER_START : VR_START;   // the scene grows around the point where you stand
   scan.position.set((1 - SCENE_SCALE) * pv.x, (1 - SCENE_SCALE) * pv.y, (1 - SCENE_SCALE) * pv.z);
+  syncReflection();
 }
 
 // p is the picked point in the scan's own (unscaled) world numbers, the same kind of numbers as before.
@@ -453,7 +478,7 @@ const rayLine = new THREE.Line(
 );
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
 function teleportFrom(ctrl) {
-  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire') return;
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire' && phase !== 'water') return;
   ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
   ray.set(_o, _d); ray.far = 40;
   const hit = ray.intersectObject(scan)[0];
@@ -470,7 +495,7 @@ const WALK_SPEED = 1.4;
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _from = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
 let groundClock = 0;
 function walk(dt) {
-  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire') return;
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire' && phase !== 'water') return;
   const session = renderer.xr.getSession();
   if (!session) return;
   for (const src of session.inputSources) {
@@ -514,7 +539,7 @@ let mistBoost = 0;       // 1 at the moment you step into the garden, easing to 
 let nearMistLevel = 1;   // eased toward 1 on the cards, 0.35 in the meditation, 0 in the desktop overview
 function updateNearMist(dt) {
   mistBoost = Math.max(0, mistBoost - dt / 18);
-  const goal = phase === 'cards' ? 1 : (phase === 'wood' || phase === 'fire') ? 0.35 + 1.1 * mistBoost : 0;
+  const goal = phase === 'cards' ? 1 : (phase === 'wood' || phase === 'fire' || phase === 'water') ? 0.35 + 1.1 * mistBoost : 0;
   nearMistLevel += (goal - nearMistLevel) * (1 - Math.exp(-dt * 1.5));
   for (const s of nearMist.children) {
     const u = s.userData; u.ang += u.speed * dt * (1 + 3 * mistBoost);
@@ -679,7 +704,7 @@ function updateBody(dt) {
   const headH = Math.max(0.9, _head.y - rig.position.y);
   bodyScale.v = clamp(headH / 1.56, 0.7, 1.35);   // the model's eyes are at about 1.56 m
   // legs: only in the meditation (and in the desktop overview when in VR)
-  body.visible = !!body.userData.legs && (phase === 'wood' || phase === 'fire' || (phase === 'garden' && renderer.xr.isPresenting));
+  body.visible = !!body.userData.legs && (phase === 'wood' || phase === 'fire' || phase === 'water' || (phase === 'garden' && renderer.xr.isPresenting));
   if (body.visible) {
     if (Math.hypot(_bf.x, _bf.z) > 0.35) { const target = Math.atan2(-_bf.x, -_bf.z); let d = target - bodyYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); bodyYaw += d * (1 - Math.exp(-dt * 6)); }
     body.rotation.y = bodyYaw; body.scale.setScalar(bodyScale.v);
@@ -1209,7 +1234,7 @@ function updateFire(dt) {
   while (mapleAcc >= 1) {
     mapleAcc -= 1;
     const m = mapleLeaves.find((l) => !l.visible); if (!m) break;
-    m.position.set(-3.5 + Math.random() * 7, 2.5 + Math.random() * 3, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true;   // all along the bridge and out past the lantern m.userData.age = 0;
+    m.position.set(-3.5 + Math.random() * 7, 2.5 + Math.random() * 3, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true;   m.userData.age = 0;   // all along the bridge and out past the lantern
     m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);   // each leaf starts at its own angle
   }
   for (const m of mapleLeaves) {
@@ -1226,6 +1251,121 @@ function updateFire(dt) {
   if (s.t >= FIRE_END) endFire();
 }
 
+
+/* =====================================================================
+   WATER: a calm pond that mirrors the pavilions, small drops of rain and the rings they open
+   ===================================================================== */
+const WATER_END = 150;
+const WATER_TIMELINE = [
+  { t: 0,   run: () => bowl(0.5) },
+  { t: 3,   voice: 'water_intro' },     // "Let your awareness flow like water. Do not resist, do not cling. ..."
+  { t: 24,  voice: 'water_breath' },
+  { t: 60,  voice: 'water_rain' },
+  { t: 118, voice: 'closing' },
+  { t: 136, run: () => bowl(0.45) },
+];
+let waterSession = null, waterOut = 0, waterVis = 0, waterAcc = 0, waterNext = 0;
+// the surface: dark and clear, a sheen of sky at a low angle, and a ring on it for every drop (position and start time go to the shader)
+const WATER_DROPS = 24;
+const waterU = { uTime: { value: 0 }, uVis: { value: 0 }, uCenter: { value: new THREE.Vector2() }, uDrops: { value: Array.from({ length: WATER_DROPS }, () => new THREE.Vector3(0, 0, -100)) } };
+const waterMesh = new THREE.Mesh(new THREE.CircleGeometry(45, 64).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
+  uniforms: waterU, transparent: true, depthWrite: false, depthTest: false,
+  vertexShader: 'varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
+  fragmentShader: /* glsl */ `
+    uniform float uTime, uVis; uniform vec2 uCenter; uniform vec3 uDrops[${WATER_DROPS}];
+    varying vec3 vW;
+    void main() {
+      vec3 V = normalize(cameraPosition - vW);
+      float fres = pow(1.0 - clamp(V.y, 0.0, 1.0), 3.0);
+      float ring = 0.0;
+      for (int i = 0; i < ${WATER_DROPS}; i++) {
+        vec3 d = uDrops[i]; float age = uTime - d.z;
+        if (age < 0.0 || age > 8.0) continue;
+        float x = distance(vW.xz, d.xy) - age * 0.75;
+        ring += exp(-x * x * 9.0) * exp(-age * 0.5) * smoothstep(0.0, 0.15, age) * (0.5 + 0.5 * cos(x * 26.0));
+      }
+      vec3 col = mix(vec3(0.04, 0.13, 0.17), vec3(0.5, 0.6, 0.68), fres * 0.55 + 0.08) + vec3(0.75, 0.88, 0.95) * ring * 0.45;
+      float a = 0.5 + fres * 0.25 + ring * 0.4;
+      a *= 1.0 - smoothstep(16.0, 40.0, length(vW.xz - uCenter));
+      gl_FragColor = vec4(col, clamp(a * uVis, 0.0, 1.0));
+    }`,
+}));
+waterMesh.renderOrder = -4; waterMesh.visible = false; waterMesh.frustumCulled = false; scene.add(waterMesh);
+// rain: thin pale streaks falling around you
+const RAIN_N = 160, rainBase = new Float32Array(RAIN_N * 3), rainPos = new Float32Array(RAIN_N * 6), rainGeo = new THREE.BufferGeometry();
+for (let i = 0; i < RAIN_N; i++) { const a = Math.random() * 6.283, r = 8 * Math.sqrt(Math.random()); rainBase[i * 3] = Math.cos(a) * r; rainBase[i * 3 + 1] = -1 + Math.random() * 7; rainBase[i * 3 + 2] = Math.sin(a) * r; }
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+const rainMat = new THREE.LineBasicMaterial({ color: 0xcfe3ee, transparent: true, opacity: 0, depthWrite: false });
+const rain = new THREE.LineSegments(rainGeo, rainMat); rain.frustumCulled = false; rain.renderOrder = 12; rain.visible = false; scene.add(rain);
+// sound: the hiss of fine rain (filtered noise) and now and then one soft drop
+let rainGain = null;
+function waterAudioStart() {
+  if (!actx) return;
+  if (!rainGain) {
+    const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1800;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7500;
+    rainGain = actx.createGain(); rainGain.gain.value = 0.0001;
+    src.connect(hp).connect(lp).connect(rainGain).connect(master); src.start();
+  }
+}
+function plink(pan = 0, vol = 0.03) {
+  if (!actx) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(), p = actx.createStereoPanner(), f = 900 + Math.random() * 900;
+  o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 0.6, t + 0.12);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  p.pan.value = pan; o.connect(g).connect(p).connect(master); o.start(t); o.stop(t + 0.2);
+}
+function dropOnWater() {   // a drop somewhere on the water in front of you
+  const yaw = rig.rotation.y, a = (Math.random() - 0.5) * 2.2, dist = 1.5 + Math.random() * Math.random() * 14;
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw), dx = fx * Math.cos(a) - fz * Math.sin(a), dz = fx * Math.sin(a) + fz * Math.cos(a);
+  waterU.uDrops.value[waterNext].set(rig.position.x + dx * dist, rig.position.z + dz * dist, time); waterNext = (waterNext + 1) % WATER_DROPS;
+  if (Math.random() < 0.7) plink(clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) * 0.8, -0.8, 0.8), 0.035 / (1 + dist * 0.15));
+}
+function startWater() {
+  waterSession = { t: 0, next: 0 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
+  if (skip > 0) { waterSession.t = skip; while (waterSession.next < WATER_TIMELINE.length && WATER_TIMELINE[waterSession.next].t < skip) waterSession.next++; }
+  faceWorldYaw(WATER_YAW);
+  waterOut = 0; waterVis = 0; waterAcc = 0; mistBoost = 1;
+  waterU.uDrops.value.forEach((d) => d.set(0, 0, -100));
+  waterMesh.position.set(WATER_START.x, waterWorldY(), WATER_START.z); waterU.uCenter.value.set(WATER_START.x, WATER_START.z); waterMesh.visible = true;
+  reflGroup.visible = true; syncReflection(); rain.visible = true;
+  audioInit(); waterAudioStart(); windLevel(0.02, 6); rustleLevel(0);
+  playReveal(14, WATER_START);
+}
+function clearWater() {
+  waterSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', '');
+  waterMesh.visible = false; reflGroup.visible = false; rain.visible = false; windLevel(0, 2);
+  if (rainGain) { rainGain.gain.cancelScheduledValues(0); rainGain.gain.setTargetAtTime(0.0001, actx.currentTime, 0.4); }
+  revealProgress.value = 0.02; reveal = null;
+}
+function endWater() { clearWater(); setPhase('cards'); }
+function updateWater(dt) {
+  const s = waterSession; if (!s) return;
+  s.t += dt;
+  while (s.next < WATER_TIMELINE.length && s.t >= WATER_TIMELINE[s.next].t) { const ev = WATER_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
+  const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (WATER_END - 24)) / 10));
+  const { inhale } = breathAt(s.t), cycle = BREATH_IN + BREATH_OUT, tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
+  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
+  waterOut += ((amp > 0.02 && !inhale ? 1 : 0) - waterOut) * (1 - Math.exp(-dt / 1.8));
+  waterVis = smooth01(s.t / 8) * (1 - smooth01((s.t - (WATER_END - 10)) / 8));
+  waterU.uTime.value = time; waterU.uVis.value = waterVis;
+  waterAcc += dt * (1.6 + 2.4 * waterOut);   // a few drops always, more on the out-breath
+  while (waterAcc >= 1) { waterAcc -= 1; dropOnWater(); }
+  for (let i = 0; i < RAIN_N; i++) {
+    let y = rainBase[i * 3 + 1] - 5.5 * dt; if (y < -1) { y += 7; const a = Math.random() * 6.283, r = 8 * Math.sqrt(Math.random()); rainBase[i * 3] = Math.cos(a) * r; rainBase[i * 3 + 2] = Math.sin(a) * r; }
+    rainBase[i * 3 + 1] = y;
+    const x = rig.position.x + rainBase[i * 3], yy = rig.position.y + y, z = rig.position.z + rainBase[i * 3 + 2];
+    rainPos.set([x, yy, z, x + 0.04, yy + 0.3, z], i * 6);
+  }
+  rainGeo.attributes.position.needsUpdate = true; rainMat.opacity = 0.22 * waterVis;
+  if (rainGain) rainGain.gain.setTargetAtTime(0.09 * waterVis * (0.85 + 0.3 * waterOut), actx.currentTime, 0.5);
+  if (s.t >= WATER_END) endWater();
+}
+
 /* =====================================================================
    PART 5: choosing a card (pinch in VR, click on a desktop)
    ===================================================================== */
@@ -1237,10 +1377,16 @@ let phaseChangedAt = -10;   // time of the last switch between places
 const PRAYER_SECONDS = 3;
 let prayerHeld = 0, prayerLost = 0;
 const PV = Array.from({ length: 6 }, () => new THREE.Vector3()), _mid = new THREE.Vector3(), _cr = new THREE.Vector3(), _cu = new THREE.Vector3();
-const prayerPos = new Float32Array(24 * 3), prayerGeo = new THREE.BufferGeometry();
-prayerGeo.setAttribute('position', new THREE.BufferAttribute(prayerPos, 3)); prayerGeo.setDrawRange(0, 0);
-const prayerDots = new THREE.Points(prayerGeo, new THREE.PointsMaterial({ map: glow, size: 0.03, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
-prayerDots.frustumCulled = false; prayerDots.renderOrder = 40; scene.add(prayerDots);
+// the ring that fills while you hold: the same pure white gradient as the circle on the ground (clear edge, fading toward the middle), turned to face you
+const prayerTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.05)'); grad.addColorStop(0.93, 'rgba(255,255,255,0.75)'); grad.addColorStop(0.975, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.985, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const prayerRing = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: prayerTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
+prayerRing.frustumCulled = false; prayerRing.renderOrder = 40; prayerRing.visible = false; scene.add(prayerRing);
 function handJoint(i, name) { const h = renderer.xr.getHand(i), j = h.joints && h.joints[name]; return j && j.visible ? j : null; }
 function palmsTogether() {
   const names = ['wrist', 'middle-finger-metacarpal', 'middle-finger-tip'], J = [];
@@ -1254,20 +1400,20 @@ function palmsTogether() {
   return near && stretched && up;
 }
 function updatePrayer(dt) {
-  if (!(phase === 'wood' || phase === 'fire') || !renderer.xr.isPresenting) { prayerHeld = 0; prayerGeo.setDrawRange(0, 0); return; }
+  if (!(phase === 'wood' || phase === 'fire' || phase === 'water') || !renderer.xr.isPresenting) { prayerHeld = 0; prayerRing.visible = false; return; }
   if (palmsTogether()) { prayerHeld += dt; prayerLost = 0; }
   else { prayerLost += dt; if (prayerLost > 0.35) prayerHeld = 0; }
-  const n = Math.floor(24 * Math.min(1, prayerHeld / PRAYER_SECONDS));
-  if (n > 0 && prayerLost <= 0.35) {
-    camera.getWorldQuaternion(_q); _cr.set(1, 0, 0).applyQuaternion(_q); _cu.set(0, 1, 0).applyQuaternion(_q);
-    for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2 - Math.PI / 2; prayerPos[k * 3] = _mid.x + (Math.cos(a) * _cr.x + Math.sin(a) * _cu.x) * 0.07; prayerPos[k * 3 + 1] = _mid.y + 0.1 + (Math.cos(a) * _cr.y + Math.sin(a) * _cu.y) * 0.07; prayerPos[k * 3 + 2] = _mid.z + (Math.cos(a) * _cr.z + Math.sin(a) * _cu.z) * 0.07; }
-    prayerGeo.attributes.position.needsUpdate = true; prayerGeo.setDrawRange(0, n);
-  } else prayerGeo.setDrawRange(0, 0);
-  if (prayerHeld >= PRAYER_SECONDS) { prayerHeld = 0; prayerGeo.setDrawRange(0, 0); exitSession(); }
+  const k = Math.min(1, prayerHeld / PRAYER_SECONDS);
+  if (k > 0 && prayerLost <= 0.35) {   // the ring grows and brightens as the three seconds pass
+    const e = k * k * (3 - 2 * k);
+    prayerRing.visible = true; prayerRing.position.set(_mid.x, _mid.y + 0.1, _mid.z); camera.getWorldQuaternion(prayerRing.quaternion);
+    prayerRing.scale.setScalar(0.1 + 0.14 * e); prayerRing.material.opacity = 0.9 * e;
+  } else prayerRing.visible = false;
+  if (prayerHeld >= PRAYER_SECONDS) { prayerHeld = 0; prayerRing.visible = false; exitSession(); }
 }
-function exitSession() { if (phase === 'wood') endWood(); else if (phase === 'fire') endFire(); }
+function exitSession() { if (phase === 'wood') endWood(); else if (phase === 'fire') endFire(); else if (phase === 'water') endWater(); }
 function checkExit() {
-  if (!(phase === 'wood' || phase === 'fire') || !renderer.xr.isPresenting) return;
+  if (!(phase === 'wood' || phase === 'fire' || phase === 'water') || !renderer.xr.isPresenting) return;
   const c = [0, 1].map((i) => renderer.xr.getController(i).userData);
   const grip = c.some((u) => u.squeezeAt != null && time - u.squeezeAt > 1.0);
   if (grip) { c.forEach((u) => { u.heldAt = null; u.squeezeAt = null; }); exitSession(); }
@@ -1283,7 +1429,7 @@ function cardUnder(origin, direction) {
 function chooseCard(card) {
   if (sel || phase !== 'cards' || !card) return;
   audioInit();
-  if (card.userData.id !== 'wood' && card.userData.id !== 'fire') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
+  if (card.userData.id !== 'wood' && card.userData.id !== 'fire' && card.userData.id !== 'water') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
   sel = { card, t: 0 };
   setCaption('', ''); endWelcome();
 }
@@ -1391,15 +1537,16 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   yaw += e.movementX * 0.004; pitch = clamp(pitch + e.movementY * 0.004, -1.2, 1.2);
 });
 
-const phCards = $('phCards'), phWood = $('phWood'), phFire = $('phFire'), phGarden = $('phGarden');
+const phCards = $('phCards'), phWood = $('phWood'), phFire = $('phFire'), phWater = $('phWater'), phGarden = $('phGarden');
 function setPhase(p) {
   if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
   if (phase === 'fire' && p !== 'fire' && fireSession) clearFire();
+  if (phase === 'water' && p !== 'water' && waterSession) clearWater();
   phase = p; phaseChangedAt = time;
   applySceneScale();
   reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
   mist.visible = p !== 'garden'; cards.visible = p === 'cards'; scan.visible = p !== 'cards';
-  [[phCards, 'cards'], [phWood, 'wood'], [phFire, 'fire'], [phGarden, 'garden']].forEach(([b, name]) => b.setAttribute('aria-pressed', p === name ? 'true' : 'false'));
+  [[phCards, 'cards'], [phWood, 'wood'], [phFire, 'fire'], [phWater, 'water'], [phGarden, 'garden']].forEach(([b, name]) => b.setAttribute('aria-pressed', p === name ? 'true' : 'false'));
   document.querySelectorAll('.garden-only').forEach((b) => { b.style.display = p === 'garden' ? 'inline-block' : 'none'; });
   controls.enabled = p === 'garden' && !renderer.xr.isPresenting;
   rig.rotation.y = 0; yaw = 0; pitch = 0;
@@ -1419,6 +1566,11 @@ function setPhase(p) {
     rig.position.copy(FIRE_START); rig.rotation.y = FIRE_YAW; camera.position.set(0, 1.5, 0);
     statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
     startFire();
+  } else if (p === 'water') {
+    scene.background.set(0x0a1112);
+    rig.position.copy(WATER_START); rig.rotation.y = WATER_YAW; camera.position.set(0, 1.5, 0);
+    statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
+    startWater();
   } else {
     scene.background.set(0xe7ddc9);
     rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update();
@@ -1429,6 +1581,7 @@ function setPhase(p) {
 phCards.addEventListener('click', () => setPhase('cards'));
 phWood.addEventListener('click', () => { audioInit(); setPhase('wood'); });
 phFire.addEventListener('click', () => { audioInit(); setPhase('fire'); });
+phWater.addEventListener('click', () => { audioInit(); setPhase('water'); });
 phGarden.addEventListener('click', () => setPhase('garden'));
 $('replay').addEventListener('click', () => playReveal(10));
 const scaleEl = $('scale');
@@ -1458,7 +1611,7 @@ window.addEventListener('resize', resize);
 resize();
 setPhase('cards');
 // ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
-{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'fire' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
+{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'fire' || ph === 'water' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
 
 let last = performance.now();
 const _cam = new THREE.Vector3();
@@ -1467,7 +1620,7 @@ renderer.setAnimationLoop((now) => {
   mistUniforms.time.value = time;
   // dusk and warm colours ease in for Fire and out again afterwards
   mistUniforms.dusk.value += ((phase === 'fire' ? 1 : 0) - mistUniforms.dusk.value) * (1 - Math.exp(-dt * 0.8));
-  { const wg = phase === 'fire' ? 1 : 0, dw = (wg - revealWarm.value) * (1 - Math.exp(-dt * 0.8)); if (Math.abs(dw) > 0.001) { revealWarm.value += dw; scan.updateVersion(); } }
+  { const wg = phase === 'fire' ? 1 : 0, dw = (wg - revealWarm.value) * (1 - Math.exp(-dt * 0.8)); if (Math.abs(dw) > 0.001) { revealWarm.value += dw; scan.updateVersion(); if (refl) refl.updateVersion(); } }
   // the mist sphere follows the viewer so the horizon never gets closer
   camera.getWorldPosition(_cam); mist.position.copy(_cam);
 
@@ -1476,7 +1629,7 @@ renderer.setAnimationLoop((now) => {
     const k = clamp(reveal.t / reveal.dur), e = k * k * (3 - 2 * k);
     revealProgress.value = lerp(0.02, 1.1, e);
     revealTime.value = reveal.t;
-    scan.updateVersion();
+    scan.updateVersion(); if (refl) refl.updateVersion();
     if (k >= 1) reveal = null;
   }
   updateNearMist(dt);
@@ -1485,6 +1638,7 @@ renderer.setAnimationLoop((now) => {
   if (phase === 'cards') updateCards(dt);
   else if (phase === 'wood') { updateWood(dt); walk(dt); }
   else if (phase === 'fire') { updateFire(dt); walk(dt); }
+  else if (phase === 'water') { updateWater(dt); walk(dt); }
   else { walk(dt); controls.update(); }
   if (phase !== 'garden') followHead(dt);
   updateBody(dt);
