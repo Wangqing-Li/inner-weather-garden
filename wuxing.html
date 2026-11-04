@@ -461,7 +461,7 @@ function teleportFrom(ctrl) {
 for (const i of [0, 1]) {
   const ctrl = renderer.xr.getController(i);
   ctrl.add(rayLine.clone());
-  ctrl.addEventListener('select', () => teleportFrom(ctrl));
+  ctrl.addEventListener('select', () => { if (time - phaseChangedAt > 1.2) teleportFrom(ctrl); });   // not right after switching places
   rig.add(ctrl);
 }
 
@@ -819,17 +819,20 @@ function makeBranchGeo() {
 }
 const branchGeos = [makeBranchGeo(), makeBranchGeo(), makeBranchGeo(), makeBranchGeo()];
 
-// Where the bamboo grows, in metres, with you at the origin looking along -z toward the pavilion. Two or three tall stalks gathered on each side,
-// one or two small ones standing alone; the strip straight ahead is left empty so the view to the pavilion stays clear.
+// Where the bamboo grows, in metres, with you at the origin looking along -z toward the pavilion. Heights are about the height of the pavilion or a little less.
+// Each entry is [x, z, height, radius, lean]: on each side one thicker stalk with two thin ones leaning left and right, and two small ones standing alone.
+// The whole layout is then turned GROVE_TURN degrees clockwise (seen from above), keeping the strip straight ahead clear.
+const GROVE_TURN = -30 * Math.PI / 180;   // negative = clockwise seen from above
+const turn = (x, z) => [x * Math.cos(GROVE_TURN) + z * Math.sin(GROVE_TURN), -x * Math.sin(GROVE_TURN) + z * Math.cos(GROVE_TURN)];
 const GROVE = [
-  [-4.3, -1.6, 7.5], [-3.7, -2.5, 6.4], [-4.9, -2.9, 8.0],        // left group
-  [4.0, -3.0, 7.2], [4.8, -2.2, 8.2], [3.5, -3.9, 6.0],           // right group
-  [-3.4, -5.4, 3.4], [3.2, 1.6, 3.8],                              // two small ones standing alone
-];
+  [-4.3, -1.6, 5.6, 0.075, 0], [-3.4, -2.5, 4.8, 0.04, 0.14], [-5.1, -2.8, 4.2, 0.04, -0.14],      // left group
+  [4.0, -3.0, 5.4, 0.075, 0], [4.9, -2.1, 4.6, 0.04, -0.14], [3.3, -3.8, 4.0, 0.04, 0.14],          // right group
+  [-3.4, -5.4, 3.2, 0.05, 0.06], [3.2, 1.6, 3.5, 0.05, -0.06],                                       // two small ones standing alone
+].map(([x, z, H, r, lean]) => { const [tx, tz] = turn(x, z); return [tx, tz, H, r, lean]; });
 const stalks = [];
-for (const [x, z, H0] of GROVE) {
-  const g = new THREE.Group(); g.position.set(x, 0, z);
-  const tall = H0 > 5, rad = tall ? 0.075 : 0.05;
+for (const [x, z, H0, rad, lean] of GROVE) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.z = lean;   // lean > 0 tips the top to the left, < 0 to the right
+  const tall = H0 > 4.5;
   const mat = new THREE.MeshBasicMaterial({ map: stalkTex.clone(), transparent: true, opacity: 0, depthWrite: false }); mat.map.needsUpdate = true;
   mat.map.repeat.set(1, H0 / 0.9);
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.8, rad, H0, 12, 1, true).translate(0, H0 / 2, 0), mat); trunk.frustumCulled = false; trunk.renderOrder = 11; g.add(trunk);
@@ -846,7 +849,8 @@ for (const [x, z, H0] of GROVE) {
   bamboo.add(g); stalks.push(g);
 }
 // Far, very faint pale stalks like the blurred shadows in the reference: tall, wide, almost not there, no leaves.
-const shadowStalks = [[-8.5, -10, 12], [8.8, -9, 12], [-6.2, -14, 14], [6.8, -13, 14]].map(([x, z, H]) => {
+const shadowStalks = [[-8.5, -10, 9], [8.8, -9, 9], [-6.2, -14, 10], [6.8, -13, 10]].map(([x0, z0, H]) => {
+  const [x, z] = turn(x0, z0);
   const m = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, H, 10, 1, true).translate(0, H / 2, 0), new THREE.MeshBasicMaterial({ color: 0xaec4a6, transparent: true, opacity: 0, depthWrite: false }));
   m.position.set(x, 0, z); m.renderOrder = 10; m.frustumCulled = false; m.userData = { seed: Math.random() * 10 }; bamboo.add(m); return m;
 });
@@ -1144,6 +1148,15 @@ function updateFire(dt) {
    ===================================================================== */
 // In VR a pinch of thumb and forefinger counts as a "select", exactly like pressing a controller trigger,
 // and the hand has a pointing ray, so one piece of code handles both. Hand tracking must be switched on in the Quest settings.
+let phaseChangedAt = -10;   // time of the last switch between places
+function exitSession() { if (phase === 'wood') endWood(); else if (phase === 'fire') endFire(); }
+function checkExit() {
+  if (!(phase === 'wood' || phase === 'fire') || !renderer.xr.isPresenting) return;
+  const c = [0, 1].map((i) => renderer.xr.getController(i).userData);
+  const both = c[0].heldAt != null && c[1].heldAt != null && time - Math.max(c[0].heldAt, c[1].heldAt) > 1.2;
+  const grip = c.some((u) => u.squeezeAt != null && time - u.squeezeAt > 1.0);
+  if (both || grip) { c.forEach((u) => { u.heldAt = null; u.squeezeAt = null; }); exitSession(); }
+}
 let hover = null, sel = null, lastHover = null, capHold = 0;   // capHold: the caption is busy (welcome, notice) until this time
 const FLOAT = 0.07;   // metres the cards rise and fall; raise it for a stronger float
 const mouse = { ndc: new THREE.Vector2(), on: false };
@@ -1206,8 +1219,13 @@ for (const i of [0, 1]) {
   const ctrl = renderer.xr.getController(i);
   ctrl.addEventListener('connected', () => { ctrl.userData.connected = true; });
   ctrl.addEventListener('disconnected', () => { ctrl.userData.connected = false; });
+  // holding the pinch (or trigger) with both hands for 1.2 s, or one grip button for 1 s, leaves a scene
+  ctrl.addEventListener('selectstart', () => { ctrl.userData.heldAt = time; });
+  ctrl.addEventListener('selectend', () => { ctrl.userData.heldAt = null; });
+  ctrl.addEventListener('squeezestart', () => { ctrl.userData.squeezeAt = time; });
+  ctrl.addEventListener('squeezeend', () => { ctrl.userData.squeezeAt = null; });
   ctrl.addEventListener('select', () => {
-    if (phase !== 'cards') return;
+    if (phase !== 'cards' || time - phaseChangedAt < 1.2) return;
     ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
     chooseCard(cardUnder(_o, _d));
   });
@@ -1228,7 +1246,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 let welcomed = false;
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  capHold = time + 12; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. When you are ready, choose a card with a pinch.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 9000); }, 3000);
+  capHold = time + 14; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, hold a pinch with both hands.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000); }, 3000);
 }
 
 /* =====================================================================
@@ -1251,7 +1269,7 @@ const phCards = $('phCards'), phWood = $('phWood'), phFire = $('phFire'), phGard
 function setPhase(p) {
   if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
   if (phase === 'fire' && p !== 'fire' && fireSession) clearFire();
-  phase = p;
+  phase = p; phaseChangedAt = time;
   applySceneScale();
   reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
   mist.visible = p !== 'garden'; cards.visible = p === 'cards'; scan.visible = p !== 'cards';
@@ -1336,6 +1354,7 @@ renderer.setAnimationLoop((now) => {
     if (k >= 1) reveal = null;
   }
   updateNearMist(dt);
+  checkExit();
   if (needAlign > 0 && renderer.xr.isPresenting && phase === 'cards' && --needAlign === 0) faceWorldYaw(0);
   if (phase === 'cards') updateCards(dt);
   else if (phase === 'wood') { updateWood(dt); walk(dt); }
@@ -1347,6 +1366,7 @@ renderer.setAnimationLoop((now) => {
   renderer.render(scene, camera);
 });
 
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') exitSession(); });   // on a desktop, Esc leaves a meditation
 window.scan = scan; // for trying things in the browser console
 </script>
 </body>
