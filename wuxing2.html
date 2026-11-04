@@ -1,0 +1,1693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Five Elements Garden - Scattered Cards</title>
+<style>
+/* Five Elements meditation space (design exploration). Separate from scan.html, which keeps the earlier hot flash prototype. */
+:root {
+  --ink: #f2f5f6;
+  --ink-dim: rgba(242, 245, 246, .76);
+  --glass: rgba(20, 27, 32, .5);
+  --glass-line: rgba(255, 255, 255, .2);
+  --ui: 'Helvetica Neue', Arial, system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; margin: 0; background: #0a1112; overflow: hidden; font-family: var(--ui); color: var(--ink); }
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.ui { position: fixed; inset: 0; display: flex; flex-direction: column; justify-content: space-between; gap: 12px; padding: 16px; box-sizing: border-box; pointer-events: none; }
+.panel { background: var(--glass); border: 1px solid var(--glass-line); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
+.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.brand { padding: 12px 16px; border-radius: 14px; max-width: 380px; }
+.brand h1 { margin: 0; font-size: 20px; font-weight: 400; }
+.brand p { margin: 6px 0 0; font-size: 13px; line-height: 1.45; color: var(--ink-dim); }
+.seg { display: flex; flex-wrap: wrap; gap: 2px; padding: 4px; border-radius: 999px; }
+button { pointer-events: auto; font-family: var(--ui); cursor: pointer; }
+.seg button { border: 0; background: transparent; color: var(--ink); padding: 8px 15px; border-radius: 999px; font-size: 13px; font-weight: 500; }
+.seg button[aria-pressed="true"] { background: rgba(255, 255, 255, .92); color: #182126; }
+.bottom { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.status { padding: 7px 12px; border-radius: 999px; font-size: 12px; color: var(--ink-dim); }
+.garden-only { display: none; }
+.credit { pointer-events: auto; font-size: 11px; }
+.credit a { color: var(--ink); }
+input[type=range] { pointer-events: auto; vertical-align: middle; }
+#vr { position: static !important; }
+@media (max-width: 520px) { .status { display: none; } }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Ma+Shan+Zheng&text=%E9%87%91%E6%9C%A8%E6%B0%B4%E7%81%AB%E5%9C%9F&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500&text=ABCDEFGHIJKLMNOPQRSTUVWXYZ&display=swap" rel="stylesheet">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+    "@sparkjsdev/spark": "https://sparkjs.dev/releases/spark/2.4.0/spark.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="stage"></div>
+
+<main class="ui">
+  <header class="top">
+    <div class="brand panel">
+      <h1>Five Elements Garden</h1>
+      <p>A meditation space in the Xgrids scan of the China Garden. Design exploration.</p>
+    </div>
+    <div class="seg panel" role="group" aria-label="Preview">
+      <button type="button" id="phCards" aria-pressed="true">Cards</button>
+      <button type="button" id="phWood" aria-pressed="false">Wood session</button>
+      <button type="button" id="phFire" aria-pressed="false">Fire session</button>
+      <button type="button" id="phWater" aria-pressed="false">Water session</button>
+      <button type="button" id="phGarden" aria-pressed="false">Garden (preview)</button>
+      <button type="button" id="replay" class="garden-only">Replay reveal</button>
+      <button type="button" id="pick" class="garden-only" aria-pressed="false">Pick VR start</button>
+      <button type="button" id="measure" class="garden-only" aria-pressed="false">Measure</button>
+      <button type="button" id="person" class="garden-only" aria-pressed="false">1.7 m person</button>
+    </div>
+  </header>
+  <footer class="bottom">
+    <div class="status panel garden-only" id="scaleBox">Scene scale <input type="range" id="scale" min="0.3" max="3" step="0.01"> <b id="scaleVal"></b></div>
+    <div class="status panel" id="status">Loading scan...</div>
+    <div class="status panel credit" id="credit">Body model: <a href="https://sketchfab.com/3d-models/lowpoly-female-body-stylized-57e2dbcff0db468db02ac712eae59070" target="_blank" rel="noopener">Lowpoly Female Body Stylized</a> by Rafasilart, CC BY-NC. Cut into legs and hands.</div>
+    <div id="vrSlot"></div>
+  </footer>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
+
+const $ = (id) => document.getElementById(id);
+const stage = $('stage'), statusEl = $('status');
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.xr.enabled = true;
+stage.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a1112);
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
+// The camera lives inside a rig so that, in VR, the rig decides where in the world you stand.
+const rig = new THREE.Group();
+rig.add(camera);
+scene.add(rig);
+
+// maxPixelRadius caps how big a single splat may be on screen; very close splats (looking down at the ground) are the heaviest to draw
+const spark = new SparkRenderer({ renderer, maxPixelRadius: 160 });
+scene.add(spark);
+
+// 'cards' = misty room with five cards, 'wood' = the Wood meditation (scan appears out of the mist),
+// 'garden' = a desktop-only overview of the scan for checking and picking points
+let phase = 'cards';
+let time = 0;   // seconds since the page opened, used by the animations
+
+/* =====================================================================
+   PART 1: the misty dream room (no scan here)
+   ===================================================================== */
+// A big sphere around the viewer, painted by a small program on the graphics card (a fragment shader).
+// Think of it as a p5.js draw() that runs once for every pixel, using noise() to get drifting mist.
+const mistUniforms = { time: { value: 0 }, dusk: { value: 0 } };
+const RIDGES = true;   // faint layered mountain silhouettes on the horizon; set to false for mist only
+const mist = new THREE.Mesh(
+  new THREE.SphereGeometry(60, 48, 32),
+  new THREE.ShaderMaterial({
+    uniforms: mistUniforms, side: THREE.BackSide, depthWrite: false,
+    vertexShader: /* glsl */ `
+      varying vec3 vDir;
+      void main() { vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec3 vDir;
+      uniform float time;
+      uniform float dusk;
+      float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+      float n3(vec3 x) {
+        vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
+                   mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z);
+      }
+      float fbm(vec3 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * n3(p); p *= 2.02; a *= 0.5; } return s; }
+      void main() {
+        vec3 d = normalize(vDir);
+        float horizon = exp(-abs(d.y) * 5.0);
+        vec3 col = mix(vec3(0.02, 0.05, 0.06), vec3(0.07, 0.14, 0.15), smoothstep(-0.4, 0.6, d.y));
+        col += vec3(0.10, 0.17, 0.16) * horizon * 0.8;
+        ${RIDGES ? `
+        float az = atan(d.x, d.z);
+        for (int k = 0; k < 3; k++) {
+          float fk = float(k);
+          // cos and sin of the angle make the noise wrap around smoothly, so there is no seam behind your head
+          float hgt = 0.12 - fk * 0.04 + 0.12 * n3(vec3(cos(az), sin(az), fk * 0.7) * (2.6 + fk * 1.1));
+          vec3 rc = k == 0 ? vec3(0.17, 0.27, 0.27) : (k == 1 ? vec3(0.10, 0.18, 0.19) : vec3(0.05, 0.10, 0.11));
+          col = mix(col, rc, 1.0 - smoothstep(hgt - 0.01, hgt + 0.01, d.y));   // edges in rising order: the reverse is undefined in GLSL and some headsets turn it black
+        }` : ''}
+        // slow drifting mist: noise that is bent by more noise, moving a little each frame
+        vec3 q = d * 2.2 + vec3(time * 0.02, time * 0.005, -time * 0.015);
+        float n = fbm(q);
+        float m = fbm(q * 1.7 + n * 1.5 + 4.0);
+        float mistAmt = smoothstep(0.35, 0.78, m);
+        col = mix(col, vec3(0.34, 0.46, 0.45), mistAmt * (0.22 + 0.5 * horizon));
+        // dusk (the Fire scene): everything warmer, with an orange glow low on the horizon and a purple sky above
+        vec3 duskCol = mix(vec3(0.10, 0.05, 0.14), vec3(0.98, 0.50, 0.22), exp(-abs(d.y) * 3.2));
+        col = mix(col, col * vec3(1.5, 0.85, 0.65) + duskCol * 0.55, dusk);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
+  })
+);
+mist.renderOrder = -1;
+scene.add(mist);
+
+/* =====================================================================
+   PART 2: five element cards, drawn on a 2D canvas (like p5.js) and hung in an arc around the viewer
+   ===================================================================== */
+// sizes are in metres: a card 0.8 m wide and 1.8 m tall hangs 2.4 m away, 30 degrees apart (the first version)
+const CARD_W = 0.8, CARD_H = 1.8, ARC_R = 2.4, ARC_STEP = 30 * Math.PI / 180, EYE = 1.5;
+// left to right; Wood is in the middle because it is the first one we build.
+// Card colours: the second colour of each set on the colour posters (Water, Wood, Metal), plus a softened black for Earth and a softened red for Fire.
+const GOLD_A = '#e6c675', GOLD_B = '#b8892f';
+const ELEMENTS = [
+  { id: 'metal', word: 'METAL', zh: '金', bg: '#CECCD6', dark: false, note: 'Clarity and stillness. A bell that settles the room.' },
+  { id: 'water', word: 'WATER', zh: '水', bg: '#003D74', dark: true,  note: 'Flow and release. Ripples that slowly settle.' },
+  { id: 'wood',  word: 'WOOD',  zh: '木', bg: '#819D8E', dark: false, note: 'Growth and breath. Bamboo reaching toward the light.' },
+  { id: 'fire',  word: 'FIRE',  zh: '火', bg: '#A5473E', dark: true,  note: 'Focus and warmth. A single flame to rest your eyes on.' },
+  { id: 'earth', word: 'EARTH', zh: '土', bg: '#3A3735', dark: true,  note: 'Grounding and stability. Solid stone beneath you.' },
+];
+const BRUSH = '"Ma Shan Zheng", "Xingkai SC", "STXingkai", "Kaiti SC", serif';   // a bold brush font from Google Fonts, loaded in <head>
+const SERIF = '"Playfair Display", "Didot", Georgia, serif';                      // high-contrast serif for the English word
+
+// The card outline, like the window shapes on the poster: the top and bottom edges rise in a gentle arch, and the four corners are bitten out by quarter circles.
+function cardShape(g, W, H, inset, r, peak) {
+  const x0 = inset, y0 = inset, x1 = W - inset, y1 = H - inset, mx = W / 2;
+  g.beginPath();
+  g.moveTo(x0 + r, y0); g.quadraticCurveTo(mx, y0 - 2 * peak, x1 - r, y0);
+  g.arc(x1, y0, r, Math.PI, Math.PI / 2, true);
+  g.lineTo(x1, y1 - r); g.arc(x1, y1, r, -Math.PI / 2, Math.PI, true);
+  g.quadraticCurveTo(mx, y1 + 2 * peak, x0 + r, y1);
+  g.arc(x0, y1, r, 0, -Math.PI / 2, true);
+  g.lineTo(x0, y0 + r); g.arc(x0, y0, r, Math.PI / 2, 0, true);
+  g.closePath();
+}
+
+// Faint ink-wash decoration along the top of each card, in the same tone as the background (pale on dark cards, dark on light ones).
+function drawDecor(g, el, W, H) {
+  const t = el.dark ? '238,232,215' : '28,48,42';
+  const A = (a) => 'rgba(' + t + ',' + a + ')';
+  if ('filter' in g) g.filter = 'blur(3px)';
+  const leaf = (x, y, len, w, ang, a) => {
+    g.save(); g.translate(x, y); g.rotate(ang); g.fillStyle = A(a);
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(len * 0.5, -w, len, 0); g.quadraticCurveTo(len * 0.5, w, 0, 0); g.fill(); g.restore();
+  };
+  if (el.id === 'wood') {                       // bamboo leaves hanging from the top corners
+    [[30, 50, 200, 28, 0.95, .34], [70, 40, 220, 30, 1.25, .26], [100, 80, 180, 26, 0.7, .30], [40, 110, 160, 22, 1.5, .22],
+     [W - 30, 60, 210, 28, 2.2, .32], [W - 70, 40, 220, 30, 1.9, .24], [W - 100, 90, 170, 26, 2.45, .28], [W / 2, 30, 150, 20, 1.6, .18]]
+      .forEach((l) => leaf(...l));
+  } else if (el.id === 'fire') {                // a setting sun with a few thin clouds
+    const sx = W * 0.5, sy = H * 0.19, grad = g.createRadialGradient(sx, sy, 0, sx, sy, 150);
+    grad.addColorStop(0, 'rgba(255,215,170,0.55)'); grad.addColorStop(1, 'rgba(255,200,150,0)');
+    g.fillStyle = grad; g.fillRect(sx - 150, sy - 150, 300, 300);
+    g.fillStyle = 'rgba(255,225,190,0.7)'; g.beginPath(); g.arc(sx, sy, 46, 0, Math.PI * 2); g.fill();
+    g.fillStyle = A(0.22); [[0.14, 120], [0.23, 200], [0.29, 90]].forEach(([yy, w], i) => g.fillRect(W * 0.5 - w / 2 + (i - 1) * 50, H * yy, w, 5));
+  } else if (el.id === 'earth') {               // weathered garden rocks: three lumpy shapes
+    g.fillStyle = A(0.2);
+    [[W * 0.28, H * 0.26, 110, 120], [W * 0.62, H * 0.27, 130, 160], [W * 0.82, H * 0.26, 70, 90]].forEach(([cx, base, w, h]) => {
+      g.beginPath(); g.moveTo(cx - w / 2, base);
+      g.quadraticCurveTo(cx - w * 0.55, base - h * 0.5, cx - w * 0.2, base - h * 0.8);
+      g.quadraticCurveTo(cx, base - h * 1.05, cx + w * 0.2, base - h * 0.7);
+      g.quadraticCurveTo(cx + w * 0.55, base - h * 0.4, cx + w / 2, base); g.closePath(); g.fill();
+    });
+    g.fillStyle = A(0.3); [[W * 0.58, H * 0.2], [W * 0.66, H * 0.17], [W * 0.27, H * 0.2]].forEach(([x, y]) => { g.beginPath(); g.ellipse(x, y, 9, 15, 0.4, 0, Math.PI * 2); g.fill(); });
+  } else if (el.id === 'water') {               // ripples spreading on the surface
+    g.lineWidth = 2.5;
+    for (let k = 0; k < 6; k++) { g.strokeStyle = A(0.34 - k * 0.05); g.beginPath(); g.ellipse(W / 2, H * 0.2, 36 + k * 34, 12 + k * 11, 0, 0, Math.PI * 2); g.stroke(); }
+  } else {                                      // metal: a bronze singing bowl with sound arcs
+    const cx = W / 2, cy = H * 0.2;
+    g.fillStyle = A(0.2); g.beginPath(); g.moveTo(cx - 85, cy); g.quadraticCurveTo(cx - 80, cy + 90, cx, cy + 92); g.quadraticCurveTo(cx + 80, cy + 90, cx + 85, cy); g.closePath(); g.fill();
+    g.strokeStyle = A(0.35); g.lineWidth = 3; g.beginPath(); g.ellipse(cx, cy, 85, 18, 0, 0, Math.PI * 2); g.stroke();
+    g.lineWidth = 2; for (let k = 0; k < 3; k++) { g.strokeStyle = A(0.22 - k * 0.05); g.beginPath(); g.arc(cx, cy + 20, 120 + k * 26, -2.3, -0.84); g.stroke(); }
+  }
+  if ('filter' in g) g.filter = 'none';
+}
+
+// Waves along the bottom edge (the "seigaiha" pattern from the poster): overlapping semicircle scales, drawn from the back row forward.
+function drawWaves(g, W, H, bg, dark) {
+  g.lineWidth = 1.6; g.strokeStyle = 'rgba(230,198,117,0.75)';
+  for (let row = 0; row < 3; row++) {
+    for (let col = -1; col < 10; col++) {
+      const cx = col * 62 + (row % 2) * 31, cy = H - 60 + row * 22;
+      g.fillStyle = bg; g.beginPath(); g.arc(cx, cy, 31, Math.PI, 0); g.fill();
+      for (const r of [31, 23, 15, 7]) { g.beginPath(); g.arc(cx, cy, r, Math.PI, 0); g.stroke(); }
+    }
+  }
+}
+
+function paintCard(el) {
+  const c = el.canvas, W = c.width, H = c.height, g = c.getContext('2d');
+  g.clearRect(0, 0, W, H);
+  g.save();
+  cardShape(g, W, H, 26, 54, 12); g.clip();
+  g.fillStyle = el.bg; g.fillRect(0, 0, W, H);
+  // ink-wash feel: big soft pale and dark blotches, then fine paper grain
+  for (let i = 0; i < 26; i++) {
+    const x = Math.random() * W, y = Math.random() * H, r = 60 + Math.random() * 160, grad = g.createRadialGradient(x, y, 0, x, y, r);
+    const light = Math.random() < 0.5;
+    grad.addColorStop(0, light ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  for (let i = 0; i < 1800; i++) {
+    const x = Math.random() * W, y = Math.random() * H, len = 6 + Math.random() * 40;
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,' + (0.03 + Math.random() * 0.05) + ')' : 'rgba(0,0,0,' + (0.02 + Math.random() * 0.05) + ')';
+    g.fillRect(x, y, len, 1 + Math.random() * 1.2);
+  }
+  drawDecor(g, el, W, H);
+  // the big brush character as the background of the card
+  const inkFill = el.dark ? 'rgba(244,238,222,0.9)' : 'rgba(18,28,26,0.88)', inkSolid = el.dark ? '#f4eede' : '#1d2b2a';
+  g.fillStyle = inkFill; g.font = '400 ' + Math.round(H * 0.46) + 'px ' + BRUSH; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(el.zh, W / 2, H * 0.5);
+  drawWaves(g, W, H, el.bg, el.dark);
+  g.restore();
+  // English word, letter by letter so it is spaced out
+  g.font = '500 44px ' + SERIF; g.fillStyle = inkSolid; g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+  const gap = 18, widths = [...el.word].map((ch) => g.measureText(ch).width);
+  let x = W / 2 - (widths.reduce((a, b) => a + b, 0) + gap * (widths.length - 1)) / 2;
+  [...el.word].forEach((ch, i) => { g.fillText(ch, x, H * 0.80); x += widths[i] + gap; });
+  // gold outline: a thick outer line and a thin inner line
+  const gold = g.createLinearGradient(0, 0, W, H); gold.addColorStop(0, GOLD_A); gold.addColorStop(0.5, GOLD_B); gold.addColorStop(1, GOLD_A);
+  g.strokeStyle = gold; g.lineWidth = 7; cardShape(g, W, H, 26, 54, 12); g.stroke();
+  g.lineWidth = 2.5; cardShape(g, W, H, 42, 42, 10); g.stroke();
+  el.tex.needsUpdate = true;
+}
+function drawCard(el) {
+  el.canvas = document.createElement('canvas'); el.canvas.width = 512; el.canvas.height = Math.round(512 * CARD_H / CARD_W);
+  el.tex = new THREE.CanvasTexture(el.canvas); el.tex.colorSpace = THREE.SRGBColorSpace; el.tex.anisotropy = 4;
+  paintCard(el);
+  return el.tex;
+}
+// the fonts come from the network: once they have arrived, paint every card again
+Promise.all([document.fonts.load('600px "Ma Shan Zheng"', '金木水火土'), document.fonts.load('46px "Playfair Display"', 'METALWODFIREARTH')])
+  .then(() => ELEMENTS.forEach(paintCard)).catch(() => {});
+
+const cards = new THREE.Group();
+scene.add(cards);
+// Where the player floats (the middle of the lake) and where each card hangs, in the scan's own world numbers (metres).
+const CARD_START = new THREE.Vector3(-24.9, -1.0, 12.9);
+const CARD_SPOTS = { wood: [-17.8, 21.0], fire: [-21.5, 26.94], water: [-28.8, 5.1], metal: [-12.0, 11.2], earth: [-36.4, 16.3] };
+const CARD_REVEAL = 0.45;     // how much of the garden shows around the centre in the card scene (0.02 nothing, 1.1 everything; the radius is about 52 x this)
+const CARD_ANGLE = 0.18;      // card height = distance x this, so every card looks about the same size, whether near or far
+const CARDS_YAW = Math.atan2(-(CARD_SPOTS.wood[0] - CARD_START.x), -(CARD_SPOTS.wood[1] - CARD_START.z));   // at the start you look toward the Wood card
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.4, 'rgba(255,255,255,0.3)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const hitMeshes = [];   // invisible, larger than the cards, so a pinch does not have to be exact
+ELEMENTS.forEach((el, i) => {
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W, CARD_H), new THREE.MeshBasicMaterial({ map: drawCard(el), side: THREE.DoubleSide, transparent: true, depthWrite: false }));
+  mesh.renderOrder = 20;
+  const glowCol = new THREE.Color(el.bg).lerp(new THREE.Color(0xffffff), 0.35);
+  const glowSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: glowCol, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }));
+  glowSprite.scale.set(CARD_W * 3.2, CARD_H * 1.5, 1); glowSprite.position.z = -0.03; glowSprite.renderOrder = 19; mesh.add(glowSprite);
+  const hit = new THREE.Mesh(new THREE.PlaneGeometry(CARD_W * 2.2, CARD_H * 1.3), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+  hit.visible = false; hit.userData.cardOf = mesh; mesh.add(hit); hitMeshes.push(hit);
+  mesh.userData = { id: el.id, phase: i * 1.3, glow: glowSprite, hit, home: new THREE.Vector3(), baseY: 0, k: 1 };
+  cards.add(mesh);
+});
+// (re)place every card; the scene is scaled around the player, so a card's spot moves with it
+function layoutCards() {
+  for (const c of cards.children) {
+    const q = CARD_SPOTS[c.userData.id];
+    const x = CARD_START.x + (q[0] - CARD_START.x) * SCENE_SCALE, z = CARD_START.z + (q[1] - CARD_START.z) * SCENE_SCALE;
+    const dist = Math.hypot(x - CARD_START.x, z - CARD_START.z), H = dist * CARD_ANGLE;
+    c.userData.k = H / CARD_H; c.scale.setScalar(c.userData.k);
+    c.userData.baseY = CARD_START.y + 1.7 + H * 0.25;
+    c.userData.home.set(x, c.userData.baseY, z); c.position.copy(c.userData.home);
+    c.lookAt(CARD_START.x, c.userData.baseY, CARD_START.z);
+  }
+}
+
+/* =====================================================================
+   PART 3: the garden (the scan) - hidden for now, kept from scan.html for the next steps
+   ===================================================================== */
+const GARDEN = new THREE.Vector3(-25, 0, 13);
+const scan = new SplatMesh({ url: 'assets/china-garden-lod4.ply' });
+scan.rotation.x = -Math.PI / 2;
+scan.visible = true;
+scene.add(scan);
+
+// Same green-ink look as scan.html, but the cloud-edged reveal now spreads outward in a circle from a centre point (scan x, scan y).
+const revealProgress = dyno.dynoFloat(0.02);   // 0 = nothing visible, 1.1 = whole garden
+const revealTime = dyno.dynoFloat(0);
+const revealCX = dyno.dynoFloat(-25), revealCY = dyno.dynoFloat(-13);
+const revealWarm = dyno.dynoFloat(0);   // 0 = the green ink look, 1 = warm dusk colours with deeper reds (Fire)
+scan.objectModifier = dyno.dynoBlock(
+  { gsplat: dyno.Gsplat },
+  { gsplat: dyno.Gsplat },
+  ({ gsplat }) => {
+    const d = new dyno.Dyno({
+      inTypes: { gsplat: dyno.Gsplat, progress: 'float', time: 'float', cx: 'float', cy: 'float', warm: 'float' },
+      outTypes: { gsplat: dyno.Gsplat },
+      globals: () => [dyno.unindent(/* glsl */ `
+        float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+        float vnoise(vec2 p) {
+          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x), mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+        }
+        float fbm(vec2 p) { float s = 0.0, a = 0.5; for (int i = 0; i < 4; i++) { s += a * vnoise(p); p *= 2.03; a *= 0.5; } return s; }
+      `)],
+      statements: ({ inputs, outputs }) => dyno.unindentLines(/* glsl */ `
+        ${outputs.gsplat} = ${inputs.gsplat};
+        vec3 p = ${inputs.gsplat}.center;
+        vec3 c = ${inputs.gsplat}.rgba.rgb;
+        float lum = dot(c, vec3(0.299, 0.587, 0.114));
+        vec2 q = p.xy - vec2(${inputs.cx}, ${inputs.cy});        // distance from the chosen point, on the ground
+        float warp = (fbm(q * 0.07 + vec2(${inputs.time} * 0.05, 0.0)) - 0.5) * 12.0;
+        float lead = ${inputs.progress} * 52.0 + warp - length(q);   // above 0 = the cloud edge has reached this splat
+        float v = clamp((lum - 0.5) * 1.6 + 0.5, 0.0, 1.0);
+        float b = floor(v * 9.0) / 9.0;
+        vec3 deep = vec3(0.03, 0.28, 0.24), mid = vec3(0.18, 0.56, 0.36), lime = vec3(0.72, 0.82, 0.22), pale = vec3(0.90, 0.94, 0.84);
+        vec3 ramp = b < 0.34 ? mix(deep, mid, b / 0.34) : (b < 0.67 ? mix(mid, lime, (b - 0.34) / 0.33) : mix(lime, pale, (b - 0.67) / 0.33));
+        vec3 ink = mix(ramp, c * vec3(0.9, 1.05, 0.9), 0.25);
+        vec3 keep = clamp((mix(vec3(lum), c, 1.5) - 0.5) * 1.1 + 0.5, 0.0, 1.0) * vec3(0.93, 1.03, 0.93);
+        float veg = smoothstep(-0.02, 0.08, c.g - max(c.r, c.b));
+        float ground = 1.0 - smoothstep(0.6, 2.0, p.z);
+        vec3 outc = mix(keep, ink, max(veg, ground * 0.85));
+        float redness = clamp((c.r - max(c.g, c.b)) * 3.0, 0.0, 1.0);
+        vec3 fireCol = outc * vec3(1.25, 0.82, 0.58) + vec3(0.05, 0.0, -0.02);
+        fireCol = mix(fireCol, vec3(min(c.r * 1.35, 1.0), c.g * 0.65, c.b * 0.5), redness);   // red maples turn a deeper red
+        ${outputs.gsplat}.rgba.rgb = mix(outc, fireCol, ${inputs.warm});
+        ${outputs.gsplat}.rgba.a = ${inputs.gsplat}.rgba.a * smoothstep(0.0, 1.2, lead);
+      `),
+    });
+    gsplat = d.apply({ gsplat, progress: revealProgress, time: revealTime, cx: revealCX, cy: revealCY, warm: revealWarm }).gsplat;
+    return { gsplat };
+  }
+);
+scan.updateGenerator();
+
+// The reveal needs a centre. World (x, y, z) turns into scan (x, -z) on the ground because the scan is rotated -90 degrees around x.
+let reveal = null;
+function playReveal(seconds = 10, centre = VR_START, to = 1.1) {
+  revealCX.value = centre.x; revealCY.value = -centre.z;
+  reveal = { t: 0, dur: seconds, to }; revealProgress.value = 0.02; scan.updateVersion(); if (refl) refl.updateVersion(); if (refl) refl.updateVersion();
+}
+
+let scanReady = false;
+const startCardsReveal = () => { if (scanReady && phase === 'cards') playReveal(9, CARD_START, CARD_REVEAL); };
+scan.initialized
+  .then(() => { scanReady = true; if (phase === 'cards') { statusEl.textContent = 'Drag to look around'; startCardsReveal(); } })
+  .catch((err) => { statusEl.textContent = 'Could not load the scan: ' + err.message; });
+
+/* ---------- picking, teleporting and walking (used in the garden, next steps) ---------- */
+const ray = new THREE.Raycaster();
+const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
+// Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
+// The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
+const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
+{ const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
+{ const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
+const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the lantern
+// Water: you stand at the lake edge at (-28.8, 5.1) and look across the water toward the garden centre. The scan has no water, so the surface is made here:
+// WATER_DROP metres below your feet (a first guess). ?water=x,y,z moves where you stand, ?waterDrop= lowers or raises the surface.
+const WATER_START = new THREE.Vector3(-28.8, -0.95, 5.1); let WATER_DROP = 0.45;
+{ const q = new URLSearchParams(location.search).get('water'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) WATER_START.set(x, y, z); } }
+{ const d = parseFloat(new URLSearchParams(location.search).get('waterDrop')); if (Number.isFinite(d)) WATER_DROP = d; }
+const WATER_YAW = Math.atan2(-(GARDEN.x - WATER_START.x), -(GARDEN.z - WATER_START.z));
+const waterWorldY = () => WATER_START.y - WATER_DROP * SCENE_SCALE;   // the scene grows around your feet, so the surface moves with it
+// The reflection: a second copy of the scan, flipped upside down about the water surface and dimmed, seen through the water. It shares the splat data, so it costs
+// drawing time but little memory. ?reflect=0 in the link turns it off if the headset struggles.
+const reflGroup = new THREE.Group(); reflGroup.visible = false; scene.add(reflGroup);
+let refl = null;
+function syncReflection() {
+  reflGroup.position.y = 2 * waterWorldY();
+  if (refl) { refl.scale.copy(scan.scale); refl.position.copy(scan.position); }
+}
+if (new URLSearchParams(location.search).get('reflect') !== '0') {
+  scan.initialized.then(() => {
+    refl = new SplatMesh({ packedSplats: scan.packedSplats });
+    refl.objectModifier = scan.objectModifier; refl.updateGenerator();
+    refl.rotation.x = -Math.PI / 2; refl.opacity = 0.5;
+    reflGroup.scale.y = -1; reflGroup.add(refl); syncReflection(); window.refl = refl;
+  });
+}
+let VR_YAW = Math.atan2(-(GARDEN.x - VR_START.x), -(GARDEN.z - VR_START.z));
+const marker = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf08a4b, depthTest: false }));
+marker.renderOrder = 10; marker.visible = false;
+scene.add(marker);
+
+// ?start=x,y,z in the link overrides the start point (x, z on the ground, y = floor height); handy for trying a different spot on the headset.
+{ const q = new URLSearchParams(location.search).get('start'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) { VR_START.set(x, y, z); VR_YAW = Math.atan2(-(GARDEN.x - x), -(GARDEN.z - z)); } } }
+// Scene scale: the scan is shown at SCENE_SCALE times its recorded size, shrunk around the standing point so your feet stay on the ground.
+// (?scale=0.6 in the link, or the slider in the garden preview.)
+let SCENE_SCALE = 1.1;   // 1 = the scan at its recorded size
+{ const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
+function applySceneScale() {
+  scan.scale.setScalar(SCENE_SCALE);
+  const pv = phase === 'cards' ? CARD_START : phase === 'fire' ? FIRE_START : phase === 'water' ? WATER_START : VR_START;   // the scene grows around the point where you stand
+  scan.position.set((1 - SCENE_SCALE) * pv.x, (1 - SCENE_SCALE) * pv.y, (1 - SCENE_SCALE) * pv.z);
+  syncReflection(); if (phase === 'cards') layoutCards();
+}
+
+// p is the picked point in the scan's own (unscaled) world numbers, the same kind of numbers as before.
+function setStart(p, shownAt) {
+  VR_START.copy(p);
+  VR_YAW = Math.atan2(-(GARDEN.x - p.x), -(GARDEN.z - p.z));
+  applySceneScale(); reference.position.copy(p);
+  if (shownAt) { marker.position.copy(shownAt); marker.visible = true; }
+  statusEl.textContent = 'Picked: x ' + p.x.toFixed(1) + ', y ' + p.y.toFixed(1) + ', z ' + p.z.toFixed(1);
+}
+
+let pickMode = false, measureMode = false, downAt = null, measureA = null;
+const pickBtn = $('pick'), measureBtn = $('measure');
+function setTool(name) {
+  pickMode = name === 'pick' && !pickMode; measureMode = name === 'measure' && !measureMode; measureA = null;
+  pickBtn.setAttribute('aria-pressed', pickMode ? 'true' : 'false'); measureBtn.setAttribute('aria-pressed', measureMode ? 'true' : 'false');
+  if (pickMode) statusEl.textContent = 'Click a spot in the garden (the central pavilion floor, for example)';
+  if (measureMode) statusEl.textContent = 'Measure: click the first point, then the second';
+}
+pickBtn.addEventListener('click', () => setTool('pick'));
+measureBtn.addEventListener('click', () => setTool('measure'));
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (phase !== 'garden' || !(pickMode || measureMode) || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
+  ray.far = Infinity;
+  const hit = ray.intersectObject(scan)[0];
+  if (!hit) { statusEl.textContent = 'Nothing hit there, try another spot'; return; }
+  if (pickMode) {
+    const L = scan.worldToLocal(hit.point.clone());     // back to the scan's own numbers, so the answer does not depend on the scale
+    setStart(new THREE.Vector3(L.x, L.z, -L.y), hit.point);
+  } else if (!measureA) {
+    measureA = hit.point.clone(); marker.position.copy(measureA); marker.visible = true;
+    statusEl.textContent = 'Measure: first point set, click the second';
+  } else {
+    const d = measureA.distanceTo(hit.point), up = Math.abs(hit.point.y - measureA.y);
+    statusEl.textContent = 'Distance ' + d.toFixed(2) + ' m, height difference ' + up.toFixed(2) + ' m (at scale ' + SCENE_SCALE.toFixed(2) + ')';
+    measureA = null;
+  }
+});
+
+const rayLine = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -8)]),
+  new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 })
+);
+const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
+function teleportFrom(ctrl) {
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire' && phase !== 'water') return;
+  ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
+  ray.set(_o, _d); ray.far = 40;
+  const hit = ray.intersectObject(scan)[0];
+  if (hit && hit.point.y < 2) rig.position.set(hit.point.x, hit.point.y, hit.point.z);
+}
+for (const i of [0, 1]) {
+  const ctrl = renderer.xr.getController(i);
+  ctrl.add(rayLine.clone());
+  ctrl.addEventListener('select', () => { if (time - phaseChangedAt > 1.2) teleportFrom(ctrl); });   // not right after switching places
+  rig.add(ctrl);
+}
+
+const WALK_SPEED = 1.4;
+const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _from = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
+let groundClock = 0;
+function walk(dt) {
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire' && phase !== 'water') return;
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  for (const src of session.inputSources) {
+    if (src.handedness !== 'left' || !src.gamepad) continue;
+    const sx = src.gamepad.axes[2] || 0, sy = src.gamepad.axes[3] || 0;
+    if (Math.hypot(sx, sy) < 0.2) return;
+    renderer.xr.getCamera().getWorldDirection(_fwd); _fwd.y = 0; _fwd.normalize();
+    _right.crossVectors(_fwd, _up);
+    rig.position.addScaledVector(_fwd, -sy * WALK_SPEED * dt).addScaledVector(_right, sx * WALK_SPEED * dt);
+    groundClock += dt;
+    if (groundClock > 0.2) {
+      groundClock = 0;
+      ray.set(_from.set(rig.position.x, rig.position.y + 1.2, rig.position.z), _down); ray.far = 4;
+      const hit = ray.intersectObject(scan)[0];
+      if (hit) rig.position.y = lerp(rig.position.y, hit.point.y, 0.5);
+    }
+  }
+}
+
+/* =====================================================================
+   PART 3b: mist near you, a body for the audience, and a 1.7 m reference person
+   ===================================================================== */
+// Near mist: big soft puffs drifting slowly around the viewer, in front of the cards.
+const puffTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(205,228,222,.6)'); grad.addColorStop(0.5, 'rgba(190,215,210,.22)'); grad.addColorStop(1, 'rgba(180,205,200,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+const nearMist = new THREE.Group();
+scene.add(nearMist);
+for (let i = 0; i < 18; i++) {
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, opacity: 0, depthWrite: false }));
+  const size = lerp(1.8, 3.6, Math.random());
+  s.scale.set(size, size * 0.6, 1);
+  s.userData = { ang: Math.random() * Math.PI * 2, r: lerp(1.3, 3.2, Math.random()), h: lerp(0.1, 2.2, Math.random()), speed: (Math.random() - 0.5) * 0.06, seed: Math.random() * 10, base: lerp(0.35, 0.8, Math.random()) };
+  nearMist.add(s);
+}
+let mistBoost = 0;       // 1 at the moment you step into the garden, easing to 0, so the mist clears slowly
+let nearMistLevel = 1;   // eased toward 1 on the cards, 0.35 in the meditation, 0 in the desktop overview
+function updateNearMist(dt) {
+  mistBoost = Math.max(0, mistBoost - dt / 18);
+  const goal = phase === 'cards' ? 0.5 : (phase === 'wood' || phase === 'fire' || phase === 'water') ? 0.35 + 1.1 * mistBoost : 0;
+  nearMistLevel += (goal - nearMistLevel) * (1 - Math.exp(-dt * 1.5));
+  for (const s of nearMist.children) {
+    const u = s.userData; u.ang += u.speed * dt * (1 + 3 * mistBoost);
+    s.position.set(rig.position.x + Math.cos(u.ang) * u.r, rig.position.y + u.h + Math.sin(time * 0.15 + u.seed) * 0.12, rig.position.z + Math.sin(u.ang) * u.r);
+    s.material.opacity = u.base * 0.45 * nearMistLevel;
+  }
+}
+
+// A simple pale body: legs, feet and chest. It follows your head, so when you look down in VR you see your own feet on the ground.
+function makeBody(withHands) {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshBasicMaterial({ color: 0xc9d6d1, transparent: true, opacity: 0.55, depthWrite: false });
+  const leg = new THREE.CapsuleGeometry(0.075, 0.7, 4, 10), foot = new THREE.BoxGeometry(0.1, 0.06, 0.27);
+  for (const sx of [-0.1, 0.1]) {
+    const l = new THREE.Mesh(leg, mat); l.position.set(sx, 0.47, 0); g.add(l);
+    const f = new THREE.Mesh(foot, mat); f.position.set(sx, 0.03, -0.07); g.add(f);
+  }
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.4, 4, 12), mat); torso.position.set(0, 1.05, 0); g.add(torso);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), mat); head.position.set(0, 1.62, 0); g.add(head);
+  g.userData = { torso, head };
+  return g;
+}
+// ---- your own legs and hands ----
+// Cut out of a free human model (assets/body.glb, one static mesh, no skeleton): lower legs with feet, and a hand with forearm for each side.
+// The cut ends fade out, so the pieces look like they dissolve into mist. The hands ride on the controllers (or on the wrist when you use hand tracking).
+// a plain unlit material; each vertex carries its own transparency, so the cut ends fade out
+const ghostMat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false });
+const body = new THREE.Group();
+body.visible = false;
+scene.add(body);
+const bodyParts = { legs: null, left: null, right: null };   // geometries, filled once the model has loaded
+const bodyScale = { v: 1 };
+const smoothstep3 = (a, b, x) => { const t = clamp((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+
+// Keep only the triangles whose centre passes keep(), and give every vertex a fade value (0 = invisible, 1 = solid).
+function cutPart(geo, keep, fade) {
+  const pos = geo.attributes.position, idx = geo.index;
+  const tris = idx ? idx.count / 3 : pos.count / 3;
+  const P = [], F = [], a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (let t = 0; t < tris; t++) {
+    const ids = idx ? [idx.getX(t * 3), idx.getX(t * 3 + 1), idx.getX(t * 3 + 2)] : [t * 3, t * 3 + 1, t * 3 + 2];
+    a.fromBufferAttribute(pos, ids[0]); b.fromBufferAttribute(pos, ids[1]); c.fromBufferAttribute(pos, ids[2]);
+    if (!keep(a.add(b).add(c).multiplyScalar(1 / 3))) continue;
+    for (const i of ids) { P.push(pos.getX(i), pos.getY(i), pos.getZ(i)); F.push(fade(pos.getX(i), pos.getY(i), pos.getZ(i))); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+  const C = []; for (const f of F) C.push(0.84, 0.9, 0.87, 0.55 * f);   // soft pale colour, alpha from the fade value
+  g.setAttribute('color', new THREE.Float32BufferAttribute(C, 4));
+  return g;
+}
+new GLTFLoader().load('assets/body.glb', (gltf) => {
+  let src = null;
+  for (const sc of gltf.scenes) sc.traverse((o) => { if (o.isMesh && !src) src = o; });
+  if (!src) return;
+  src.updateWorldMatrix(true, false);
+  const g = src.geometry.clone().applyMatrix4(src.matrixWorld);   // the model faces +z, stands on y = 0, arms out along x (a T pose)
+  // lower legs and feet: solid up to about 0.40 m, fading out around the knee (0.45 to 0.58 m)
+  bodyParts.legs = cutPart(g, (m) => m.y < 0.60, (x, y) => 1 - smoothstep3(0.40, 0.58, y)).rotateY(Math.PI);   // turn the toes to -z, forward in three.js
+  // hand and forearm for each side: x beyond 0.36 m on the arm line, fading in over the forearm; moved so the hand is at the origin and the fingers point to -z
+  for (const side of [1, -1]) {
+    const part = cutPart(g, (m) => m.y > 1.0 && m.x * side > 0.36, (x) => smoothstep3(0.38, 0.52, x * side));
+    part.translate(-side * 0.69, -1.27, -0.04); part.rotateY(side * Math.PI / 2);
+    bodyParts[side > 0 ? 'left' : 'right'] = part;   // facing +z, the character's left hand is at +x
+  }
+  const legs = new THREE.Mesh(bodyParts.legs, ghostMat); legs.frustumCulled = false; legs.renderOrder = 15;   // drawn after the mist, so it never flickers behind it
+  body.add(legs); body.userData.legs = legs;
+});
+
+const reference = makeBody();                  // a 1.7 m person standing at the start point, only in the desktop overview
+reference.visible = false;
+scene.add(reference);
+// Standing circle: a pale disc under your feet with a clear outer edge that fades to nothing toward the middle.
+// With each breath the whole circle follows the breathing: it forms during the in-breath, then spreads outward as one ring and vanishes during the out-breath.
+const ringTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(220,238,232,0)'); grad.addColorStop(0.5, 'rgba(220,238,232,0.04)'); grad.addColorStop(0.93, 'rgba(220,238,232,0.7)'); grad.addColorStop(0.975, 'rgba(220,238,232,0.8)'); grad.addColorStop(0.985, 'rgba(220,238,232,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const standRing = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
+standRing.renderOrder = 14; standRing.visible = false; standRing.frustumCulled = false; scene.add(standRing);
+const ringState = { mode: 'idle', k: 0 };   // set by the Wood session: 'in' / 'out' with progress k from 0 to 1
+const _floor = new THREE.Vector3();
+function updateRipples(dt, on) {
+  standRing.visible = on;
+  if (!on) return;
+  const ease = (k) => k * k * (3 - 2 * k);
+  let scale = 1, op = 0.4;
+  if (ringState.mode === 'in') { op = 0.45 * ease(ringState.k); }
+  else if (ringState.mode === 'out') { const e = ease(ringState.k); scale = lerp(1, 4.5, e); op = 0.45 * Math.pow(1 - e, 1.2); }
+  standRing.position.copy(_floor); standRing.scale.setScalar(1.25 * bodyScale.v * scale);
+  standRing.material.opacity = op;
+}
+const _bf = new THREE.Vector3(); let bodyYaw = 0;
+// Turn the rig so that your head ends up facing world direction `target` (a yaw angle; 0 = toward -z), whichever way you happened to be looking.
+function faceWorldYaw(target) {
+  if (!renderer.xr.isPresenting) return;
+  camera.getWorldDirection(_bf);
+  if (Math.hypot(_bf.x, _bf.z) < 0.2) return;
+  rig.rotation.y += target - Math.atan2(-_bf.x, -_bf.z);
+  rig.updateMatrixWorld(true);
+}
+let needAlign = 0;
+const handMeshes = [];   // [{ obj, parent }]
+function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.renderOrder = 15; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
+for (const i of [0, 1]) {
+  rig.add(renderer.xr.getControllerGrip(i));
+  rig.add(renderer.xr.getHand(i));   // the hand object must be in the scene, or its wrist joint never moves
+  const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
+  const note = (e) => { ctrl.userData.side = e.data.handedness; ctrl.userData.isHand = !!e.data.hand; };
+  ctrl.addEventListener('connected', note);
+}
+// With hand tracking the hand is drawn from the 25 joints the headset reports: a ball at every joint and a tapered tube between neighbours,
+// so the fingers bend as yours do (the model's hand is one stiff mesh and cannot).
+const HAND_FINGERS = ['thumb', 'index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'];
+const HAND_CHAINS = HAND_FINGERS.map((f) => ['wrist', ...(f === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'] : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip']).map((n) => f + '-' + n)]);
+// Overlapping see-through tubes would show every joint as a darker spot. So each piece is drawn twice: first only into the depth buffer (all pieces, order 14),
+// then in colour (order 15), where a pixel passes only for the nearest surface. Every pixel of the hand is therefore blended once and the hand looks like one smooth shape.
+const handBoneMat = new THREE.MeshBasicMaterial({ color: 0xe9e2d8, transparent: true, opacity: 0.55, depthWrite: false });
+const handDepthMat = new THREE.MeshBasicMaterial({ transparent: true, colorWrite: false, depthWrite: true });
+const boneGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true), ballGeo = new THREE.SphereGeometry(1, 8, 6);
+const _hMid = new THREE.Vector3(), _hQ = new THREE.Quaternion(), _hA = new THREE.Vector3(), _hB = new THREE.Vector3(), _hUp = new THREE.Vector3(0, 1, 0);
+// a piece and its depth-only twin; both always get the same transform, so their depths match exactly
+function handPair(geo, grp) {
+  const col = new THREE.Mesh(geo, handBoneMat), dep = new THREE.Mesh(geo, handDepthMat);
+  col.renderOrder = 15; dep.renderOrder = 14; col.frustumCulled = dep.frustumCulled = false; grp.add(dep, col);
+  col.userData.twin = dep; return col;
+}
+function placeHand(m, pos, quat, sx, sy, sz) {
+  for (const o of [m, m.userData.twin]) { o.position.copy(pos); if (quat) o.quaternion.copy(quat); o.scale.set(sx, sy, sz); }
+}
+function updateJointHand(i) {
+  const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
+  if (!hand.joints) return;
+  if (!hand.userData.skin) {
+    const grp = new THREE.Group(); grp.renderOrder = 15; scene.add(grp);
+    const bones = [], balls = {};
+    for (const chain of HAND_CHAINS) for (let k = 0; k < chain.length; k++) {
+      if (!balls[chain[k]]) balls[chain[k]] = handPair(ballGeo, grp);
+      if (k) bones.push([handPair(boneGeo, grp), chain[k - 1], chain[k]]);
+    }
+    hand.userData.skin = { grp, bones, balls };
+  }
+  const { grp, bones, balls } = hand.userData.skin, wrist = hand.joints['wrist'];
+  grp.visible = !!(ctrl.userData.isHand && wrist && wrist.visible);
+  if (!grp.visible) return;
+  for (const name in balls) { const j = hand.joints[name]; if (!j) continue; j.getWorldPosition(_hA); const r = (j.jointRadius || 0.008) * 1.1; placeHand(balls[name], _hA, null, r, r, r); }
+  for (const [m, a, b] of bones) {
+    const ja = hand.joints[a], jb = hand.joints[b]; if (!ja || !jb) continue;
+    ja.getWorldPosition(_hA); jb.getWorldPosition(_hB);
+    const len = _hA.distanceTo(_hB); if (len < 1e-4) continue;
+    _hMid.copy(_hA).add(_hB).multiplyScalar(0.5);
+    _hQ.setFromUnitVectors(_hUp, _hB.sub(_hA).normalize());
+    const r = ((ja.jointRadius || 0.008) + (jb.jointRadius || 0.008)) * 0.5 * 1.05;
+    placeHand(m, _hMid, _hQ, r, len, r);
+  }
+}
+function updateBody(dt) {
+  camera.getWorldPosition(_head); camera.getWorldDirection(_bf);
+  const headH = Math.max(0.9, _head.y - rig.position.y);
+  bodyScale.v = clamp(headH / 1.56, 0.7, 1.35);   // the model's eyes are at about 1.56 m
+  // legs: only in the meditation (and in the desktop overview when in VR)
+  body.visible = !!body.userData.legs && (phase === 'wood' || phase === 'fire' || phase === 'water' || (phase === 'garden' && renderer.xr.isPresenting));
+  if (body.visible) {
+    if (Math.hypot(_bf.x, _bf.z) > 0.35) { const target = Math.atan2(-_bf.x, -_bf.z); let d = target - bodyYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); bodyYaw += d * (1 - Math.exp(-dt * 6)); }
+    body.rotation.y = bodyYaw; body.scale.setScalar(bodyScale.v);
+    body.position.set(_head.x + Math.sin(bodyYaw) * 0.05, rig.position.y, _head.z + Math.cos(bodyYaw) * 0.05);
+  }
+  _floor.set(_head.x, rig.position.y + 0.03, _head.z);
+  updateRipples(dt, body.visible);
+  if (!renderer.xr.isPresenting) return;
+  for (const i of [0, 1]) updateJointHand(i);
+  // hands on controllers: one piece on each controller grip (with hand tracking the jointed hand above is used instead)
+  if (!bodyParts.left) return;
+  for (const i of [0, 1]) {
+    const ctrl = renderer.xr.getController(i), grip = renderer.xr.getControllerGrip(i), hand = renderer.xr.getHand(i), side = ctrl.userData.side;
+    if (!side || !ctrl.userData.connected) continue;
+    const key = side === 'left' ? 'left' : 'right';
+    if (!grip.userData.piece) { grip.userData.piece = handPiece(key); grip.add(grip.userData.piece); }
+    if (grip.userData.piece) grip.userData.piece.visible = !ctrl.userData.isHand;
+  }
+  for (const m of handMeshes) m.scale.setScalar(bodyScale.v);
+}
+
+/* =====================================================================
+   PART 4: sound (made in code with the Web Audio API), a caption that follows your gaze, and the breathing particles
+   ===================================================================== */
+let actx = null, master = null, windGain = null, rustleGain = null;
+function audioInit() {
+  if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
+  // wind through bamboo: white noise, filtered, with its loudness slowly swelling and fading
+  const len = actx.sampleRate * 4, buf = actx.createBuffer(1, len, actx.sampleRate), data = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+  const band = actx.createBiquadFilter(); band.type = 'bandpass'; band.frequency.value = 650; band.Q.value = 0.6;
+  const rustle = actx.createBiquadFilter(); rustle.type = 'highpass'; rustle.frequency.value = 3200;
+  rustleGain = actx.createGain(); rustleGain.gain.value = 0.1;
+  // the quick "sa-sa" flutter: a second slow-ish oscillator pushes the rustle loudness up and down about twice a second
+  const flutter = actx.createOscillator(); flutter.frequency.value = 2.2; const flutterDepth = actx.createGain(); flutterDepth.gain.value = 0.05;
+  flutter.connect(flutterDepth).connect(rustleGain.gain); flutter.start();
+  windGain = actx.createGain(); windGain.gain.value = 0;
+  const lfo = actx.createOscillator(); lfo.frequency.value = 0.09;
+  const lfoDepth = actx.createGain(); lfoDepth.gain.value = 0.35;
+  lfo.connect(lfoDepth).connect(windGain.gain);   // the swell is added on top of the base level
+  src.connect(band).connect(windGain); src.connect(rustle).connect(rustleGain).connect(windGain);
+  windGain.connect(master);
+  src.start(); lfo.start();
+}
+function rustleLevel(v) { if (rustleGain) rustleGain.gain.setTargetAtTime(v, actx.currentTime, 0.4); }
+// a distant bird: two to five short rising whistles, quiet, softened, placed at a random side
+function chirp(vol = 0.04) {
+  if (!actx) return;
+  const pan = actx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3600;
+  lp.connect(pan).connect(master);
+  const base = 2300 + Math.random() * 1500, n = 2 + Math.floor(Math.random() * 4);
+  let t = actx.currentTime + 0.02;
+  for (let i = 0; i < n; i++) {
+    const o = actx.createOscillator(), g = actx.createGain(), f0 = base * (0.9 + Math.random() * 0.25);
+    o.type = 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * (1.25 + Math.random() * 0.3), t + 0.09);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(lp); o.start(t); o.stop(t + 0.14); t += 0.14 + Math.random() * 0.08;
+  }
+}
+function windLevel(v, seconds = 4) { if (windGain) windGain.gain.setTargetAtTime(v, actx.currentTime, seconds / 3); }
+// singing bowl: a few sine waves at bowl-like frequencies that each fade out slowly; two copies slightly apart make the shimmer
+function bowl(vol = 0.5) {
+  if (!actx) return;
+  const t = actx.currentTime;
+  [[1, 1], [2.76, 0.5], [5.4, 0.25], [8.9, 0.12]].forEach(([ratio, amp], i) => {
+    for (const det of [0, 1.3]) {
+      const o = actx.createOscillator(); o.type = 'sine'; o.frequency.value = 196 * ratio + det;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol * amp * 0.5, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 10 / (1 + i * 0.6));
+      o.connect(g).connect(master); o.start(t); o.stop(t + 10.5);
+    }
+  });
+}
+// the spoken lines are plain audio files made with a computer voice for now; swap in your own recordings with the same file names
+const voices = {};
+function say(name) {
+  const a = voices[name] || (voices[name] = new Audio('assets/audio/' + name + '.m4a'));
+  a.currentTime = 0; a.play().catch(() => {});
+}
+function stopVoices() { Object.values(voices).forEach((a) => a.pause()); }
+
+// Caption: text drawn on a canvas, shown on a sprite that drifts after your head so it stays in view but never sticks to your face.
+const capCanvas = document.createElement('canvas'); capCanvas.width = 1024; capCanvas.height = 320;
+const capTex = new THREE.CanvasTexture(capCanvas); capTex.colorSpace = THREE.SRGBColorSpace;
+const caption = new THREE.Sprite(new THREE.SpriteMaterial({ map: capTex, transparent: true, depthTest: false }));
+caption.scale.set(1.8, 0.5625, 1); caption.renderOrder = 30; caption.visible = false;
+scene.add(caption);
+let capMain = '', capCue = '';
+function setCaption(main, cue = '') {
+  if (main === capMain && cue === capCue) return;
+  capMain = main; capCue = cue;
+  caption.visible = !!(main || cue);
+  const g = capCanvas.getContext('2d');
+  g.clearRect(0, 0, 1024, 320);
+  g.textAlign = 'center'; g.fillStyle = '#f2f5f6'; g.shadowColor = 'rgba(0,0,0,.65)'; g.shadowBlur = 12;
+  g.font = '300 40px Georgia, serif';
+  const words = main.split(' '), lines = []; let line = '';
+  for (const w of words) { const t = line ? line + ' ' + w : w; if (g.measureText(t).width > 940 && line) { lines.push(line); line = w; } else line = t; }
+  if (line) lines.push(line);
+  lines.slice(0, 4).forEach((l, i) => g.fillText(l, 512, 60 + i * 52));
+  if (cue) { g.font = '500 34px Georgia, serif'; g.fillStyle = '#9fe6c6'; g.fillText(cue.toUpperCase().split('').join(' '), 512, 290); }
+  capTex.needsUpdate = true;
+}
+const _head = new THREE.Vector3(), _dir = new THREE.Vector3(), _capTarget = new THREE.Vector3();
+function followHead(dt) {
+  if (phase === 'cards') {   // on the cards the text hangs fixed in the middle of the view, a little below the cards
+    caption.scale.set(1.5, 0.47, 1);
+  } else
+  caption.scale.set(1.8, 0.5625, 1);
+  camera.getWorldPosition(_head); camera.getWorldDirection(_dir); _dir.y = 0; if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, -1); _dir.normalize();
+  _capTarget.copy(_head).addScaledVector(_dir, 2.2); _capTarget.y = _head.y - 0.5;
+  if (!caption.userData.placed) { caption.position.copy(_capTarget); caption.userData.placed = true; }
+  caption.position.lerp(_capTarget, 1 - Math.exp(-dt * 1.6));
+}
+
+// Breathing particles: they gather toward you as you breathe in and drift back out as you breathe out.
+const P_N = 400, pHome = new Float32Array(P_N * 3), pPos = new Float32Array(P_N * 3), pSeed = new Float32Array(P_N);
+for (let i = 0; i < P_N; i++) {
+  const az = Math.random() * Math.PI * 2, r = lerp(2.2, 8, Math.random());
+  pHome[i * 3] = Math.sin(az) * r; pHome[i * 3 + 1] = 0.3 + Math.random() * 4.5; pHome[i * 3 + 2] = Math.cos(az) * r; pSeed[i] = Math.random();
+}
+const pGeo = new THREE.BufferGeometry();
+pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const glow = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(235,255,245,1)'); grad.addColorStop(0.25, 'rgba(120,235,190,.7)'); grad.addColorStop(1, 'rgba(60,200,170,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+})();
+const particleMat = new THREE.PointsMaterial({ map: glow, size: 0.2, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 });
+const particles = new THREE.Points(pGeo, particleMat);
+particles.frustumCulled = false; particles.visible = false;
+scene.add(particles);
+
+/* ---------- bamboo: smooth pale stalks with thin branches and slender leaves, faint and half there ---------- */
+const USE_PARTICLES = false;   // the glowing breath particles from the first version; off now that the bamboo shows the breath
+const bamboo = new THREE.Group();
+bamboo.visible = false; scene.add(bamboo);
+
+// A smooth stalk: light yellow-green on one side, darker on the other, with a thin pale ring at each joint.
+const stalkTex = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 256;
+  const g = c.getContext('2d');
+  const lr = g.createLinearGradient(0, 0, 64, 0); lr.addColorStop(0, '#c2d287'); lr.addColorStop(0.35, '#98b955'); lr.addColorStop(0.8, '#6a9238'); lr.addColorStop(1, '#557a2c');
+  g.fillStyle = lr; g.fillRect(0, 0, 64, 256);
+  for (let i = 0; i < 80; i++) { g.fillStyle = 'rgba(255,255,230,0.05)'; g.fillRect(Math.random() * 64, Math.random() * 256, 1, 20 + Math.random() * 60); }
+  g.fillStyle = 'rgba(85,110,40,0.55)'; g.fillRect(0, 238, 64, 5);   // a little shadow above the joint
+  g.fillStyle = '#e6dba3'; g.fillRect(0, 243, 64, 5);                 // the thin pale ring
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
+})();
+
+// One leaf: a long thin pointed shape, darker at the base and lighter at the tip (colour stored per vertex).
+function slenderLeaf(len, wid, dark, light) {
+  const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(wid, len * 0.4, 0, len); sh.quadraticCurveTo(-wid, len * 0.4, 0, 0);
+  const g = new THREE.ShapeGeometry(sh, 4), pos = g.attributes.position, col = [];
+  const a = new THREE.Color(dark), b = new THREE.Color(light), c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) { c.copy(a).lerp(b, pos.getY(i) / len); col.push(c.r, c.g, c.b); }
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  return g;
+}
+// One branch: a thin twig along +x with leaf pairs along it and one at the tip, all merged into one mesh. Several random variants are made and shared.
+function makeBranchGeo() {
+  const L = 0.9 + Math.random() * 0.5, parts = [];
+  const stem = new THREE.CylinderGeometry(0.004, 0.009, L, 4, 1).translate(0, L / 2, 0).rotateZ(-Math.PI / 2);
+  const sc = []; for (let i = 0; i < stem.attributes.position.count; i++) sc.push(0.5, 0.6, 0.3);
+  stem.setAttribute('color', new THREE.Float32BufferAttribute(sc, 3)); parts.push(stem);
+  const dark = Math.random() < 0.5 ? '#4b7a25' : '#5d8a2a', light = Math.random() < 0.5 ? '#a8c957' : '#c4d46a';
+  for (const t of [0.3, 0.5, 0.7, 0.9]) {
+    for (const side of [1, -1]) {
+      const g = slenderLeaf(0.42 + Math.random() * 0.2, 0.05 + Math.random() * 0.03, dark, light);
+      g.rotateZ(-Math.PI / 2).rotateY(side * (0.5 + Math.random() * 0.4)).rotateZ(-0.15 - Math.random() * 0.3).translate(t * L, 0, 0); parts.push(g);
+    }
+  }
+  const tip = slenderLeaf(0.5, 0.06, dark, light); tip.rotateZ(-Math.PI / 2).rotateZ(-0.2).translate(L, 0, 0); parts.push(tip);
+  return mergeGeometries(parts);
+}
+const branchGeos = [makeBranchGeo(), makeBranchGeo(), makeBranchGeo(), makeBranchGeo()];
+
+// Where the bamboo grows, in metres, with you at the origin looking along -z toward the pavilion. Heights are about the height of the pavilion or a little less.
+// Each entry is [x, z, height, radius, lean]: on each side one thicker stalk with two thin ones leaning left and right, and two small ones standing alone.
+// The whole layout is then turned GROVE_TURN degrees clockwise (seen from above), keeping the strip straight ahead clear.
+const GROVE_TURN = -30 * Math.PI / 180;   // negative = clockwise seen from above
+const turn = (x, z) => [x * Math.cos(GROVE_TURN) + z * Math.sin(GROVE_TURN), -x * Math.sin(GROVE_TURN) + z * Math.cos(GROVE_TURN)];
+const GROVE = [
+  [-4.3, -1.6, 5.6, 0.075, 0], [-3.4, -2.5, 4.8, 0.04, 0.14], [-5.1, -2.8, 4.2, 0.04, -0.14],      // left group
+  [4.0, -3.0, 5.4, 0.075, 0], [4.9, -2.1, 4.6, 0.04, -0.14], [3.3, -3.8, 4.0, 0.04, 0.14],          // right group
+  [-3.4, -5.4, 3.2, 0.05, 0.06], [3.2, 1.6, 3.5, 0.05, -0.06],                                       // two small ones standing alone
+].map(([x, z, H, r, lean]) => { const [tx, tz] = turn(x, z); return [tx, tz, H, r, lean]; });
+const stalks = [];
+for (const [x, z, H0, rad, lean] of GROVE) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.z = lean;   // lean > 0 tips the top to the left, < 0 to the right
+  const tall = H0 > 4.5;
+  const mat = new THREE.MeshBasicMaterial({ map: stalkTex.clone(), transparent: true, opacity: 0, depthWrite: false }); mat.map.needsUpdate = true;
+  mat.map.repeat.set(1, H0 / 0.9);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.8, rad, H0, 12, 1, true).translate(0, H0 / 2, 0), mat); trunk.frustumCulled = false; trunk.renderOrder = 11; g.add(trunk);
+  const leafMat = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const n = tall ? 8 : 4, clusters = [];
+  for (let k = 0; k < n; k++) {
+    const f = tall ? 0.45 + 0.53 * k / (n - 1) : 0.6 + 0.4 * k / (n - 1);
+    const b = new THREE.Mesh(branchGeos[Math.floor(Math.random() * branchGeos.length)], leafMat);
+    b.position.y = H0 * f; b.rotation.y = k * 2.4 + Math.random() * 1.2;   // each branch points a different way around the stalk
+    const tilt = 0.4 + Math.random() * 0.5; b.rotation.z = tilt; b.scale.setScalar(tall ? 1 : 0.8);
+    b.userData = { seed: Math.random() * 10 + k, tilt }; b.renderOrder = 12; b.frustumCulled = false; g.add(b); clusters.push(b);
+  }
+  g.userData = { H0, trunk, leafMat, clusters, seed: Math.random() * 10 };
+  bamboo.add(g); stalks.push(g);
+}
+// Far, very faint pale stalks like the blurred shadows in the reference: tall, wide, almost not there, no leaves.
+const shadowStalks = [[-8.5, -10, 9], [8.8, -9, 9], [-6.2, -14, 10], [6.8, -13, 10]].map(([x0, z0, H]) => {
+  const [x, z] = turn(x0, z0);
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.18, H, 10, 1, true).translate(0, H / 2, 0), new THREE.MeshBasicMaterial({ color: 0xaec4a6, transparent: true, opacity: 0, depthWrite: false }));
+  m.position.set(x, 0, z); m.renderOrder = 10; m.frustumCulled = false; m.userData = { seed: Math.random() * 10 }; bamboo.add(m); return m;
+});
+let swayAmt = 0;   // 0..1, follows the out-breath
+function updateBamboo(opacity) {
+  for (const g of stalks) {
+    const { trunk, leafMat, clusters, seed } = g.userData;
+    const flick = 0.65 + 0.35 * Math.sin(time * 0.35 + seed);   // each stalk slowly appears and half fades, "now you see it, now you don't"
+    trunk.material.opacity = 0.55 * flick * opacity; leafMat.opacity = 0.8 * flick * opacity;
+    for (const b of clusters) {
+      const wave = Math.sin(time * 2.6 + b.userData.seed * 3), wave2 = Math.cos(time * 2.0 + b.userData.seed * 2);
+      b.rotation.z = b.userData.tilt + 0.012 * Math.sin(time * 0.8 + b.userData.seed) + swayAmt * 0.13 * wave;   // almost still on the in-breath, a clear sway on the out-breath
+      b.rotation.x = swayAmt * 0.12 * wave2;
+    }
+  }
+  for (const m of shadowStalks) m.material.opacity = 0.11 * (0.6 + 0.4 * Math.sin(time * 0.25 + m.userData.seed)) * opacity;
+}
+// Falling leaves: single slender leaves that let go during the out-breath and drift down.
+const fallGeo = slenderLeaf(0.42, 0.045, '#5d8a2a', '#b9cf62');
+const fallLeaves = [];
+for (let i = 0; i < 40; i++) {
+  const m = new THREE.Mesh(fallGeo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  m.visible = false; m.renderOrder = 13; m.frustumCulled = false; m.userData = { ph: Math.random() * 6, vy: 0.35 + Math.random() * 0.25, spin: (Math.random() - 0.5) * 2.5 };
+  bamboo.add(m); fallLeaves.push(m);
+}
+let spawnAcc = 0;
+function updateFalling(dt, opacity) {
+  if (swayAmt > 0.25) spawnAcc += dt * 7 * swayAmt;
+  while (spawnAcc >= 1) {
+    spawnAcc -= 1;
+    const m = fallLeaves.find((l) => !l.visible); if (!m) break;
+    const st = stalks[Math.floor(Math.random() * stalks.length)], cl = st.userData.clusters[Math.floor(Math.random() * st.userData.clusters.length)];
+    m.position.set(st.position.x + (Math.random() - 0.5) * 1.2, cl.position.y * (0.5 + Math.random() * 0.5), st.position.z + (Math.random() - 0.5) * 1.2);
+    m.visible = true; m.userData.age = 0;
+  }
+  for (const m of fallLeaves) {
+    if (!m.visible) continue;
+    const u = m.userData; u.age += dt;
+    m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.2 + u.ph) * 0.3 * dt; m.position.z += Math.cos(time * 0.9 + u.ph) * 0.25 * dt;
+    m.rotation.z += u.spin * dt; m.rotation.x = Math.sin(time * 1.7 + u.ph) * 0.9;
+    m.material.opacity = 0.8 * opacity * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
+    if (m.position.y < 0.05) m.visible = false;
+  }
+}
+
+/* ---------- the Wood session: a list of things that happen at given seconds ---------- */
+const BREATH_IN = 4, BREATH_OUT = 6, BREATH_START = 14;   // seconds; breathing guide begins at 14 s
+const SESSION_END = 238;
+// There is no text on screen during the meditation, only voice and sound.
+const TIMELINE = [
+  { t: 0,   run: () => bowl(0.55) },
+  { t: 3,   voice: 'wood_intro' },
+  { t: 14,  voice: 'breath_start' },
+  { t: 30,  voice: 'spine' },     // "Feel your spine as upright as bamboo, full of resilience. With every breath, you draw life and vitality inward."
+  { t: 55,  voice: 'scan_feet' },
+  { t: 85,  voice: 'scan_legs' },
+  { t: 115, voice: 'scan_belly' },
+  { t: 145, voice: 'scan_chest' },
+  { t: 175, voice: 'scan_face' },
+  { t: 205, voice: 'closing' },
+  { t: 218, run: () => bowl(0.5) },
+];
+let woodSession = null;
+function startWood() {
+  woodSession = { t: 0, next: 0, nextBird: 20 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));   // ?skip=60 starts the meditation 60 s in (for testing)
+  if (skip > 0) { woodSession.t = skip; while (woodSession.next < TIMELINE.length && TIMELINE[woodSession.next].t < skip) woodSession.next++; woodSession.nextBird = skip + 5; }
+  faceWorldYaw(VR_YAW);   // turn the rig so that, whichever way you were physically facing, you look toward the pavilion
+  swayAmt = 0; spawnAcc = 0; mistBoost = 1; bamboo.position.copy(rig.position); bamboo.rotation.y = rig.rotation.y; bamboo.visible = true; updateBamboo(0);
+  particles.visible = USE_PARTICLES; particleMat.opacity = 0;
+  audioInit(); windLevel(0.05, 6); rustleLevel(0.1);
+  playReveal(14);
+}
+function endWood() {
+  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 3); rustleLevel(0);
+  revealProgress.value = 0.02; reveal = null;
+  setPhase('cards');
+}
+// breath 0..1: rises over BREATH_IN seconds, falls over BREATH_OUT seconds, repeats
+const smooth01 = (x) => { const t = clamp(x); return t * t * (3 - 2 * t); };
+function breathAt(t) {
+  const tc = (t - BREATH_START) % (BREATH_IN + BREATH_OUT);
+  return { b: tc < BREATH_IN ? smooth01(tc / BREATH_IN) : 1 - smooth01((tc - BREATH_IN) / BREATH_OUT), inhale: tc < BREATH_IN };
+}
+function updateWood(dt) {
+  const s = woodSession; if (!s) return;
+  s.t += dt;
+  while (s.next < TIMELINE.length && s.t >= TIMELINE[s.next].t) {
+    const ev = TIMELINE[s.next++];
+    if (ev.run) ev.run();
+    if (ev.voice) say(ev.voice);
+  }
+  // the guide fades in after BREATH_START and fades out before the end
+  const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (SESSION_END - 24)) / 10));
+  const { inhale } = breathAt(s.t);
+  const cycle = BREATH_IN + BREATH_OUT;
+  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
+  if (amp > 0.02) {
+    ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT;
+    // the leaves sway during the out-breath: a gentle swell that rises and falls
+    swayAmt += ((inhale ? 0 : 1) - swayAmt) * (1 - Math.exp(-dt / 1.3));   // eased, so the leaves wind down slowly after each out-breath
+    rustleLevel(inhale ? 0.08 : 0.08 + 0.5 * swayAmt);
+  } else { ringState.mode = 'idle'; swayAmt += (0 - swayAmt) * (1 - Math.exp(-dt / 1.3)); }
+  // the bamboo fades in with the reveal and out at the end
+  const vis = smooth01(s.t / 10) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8));
+  updateBamboo(vis); updateFalling(dt, vis);
+  if (s.t > s.nextBird) { chirp(); if (Math.random() < 0.5) setTimeout(chirp, 700 + Math.random() * 900); s.nextBird = s.t + 7 + Math.random() * 9; }
+  if (USE_PARTICLES) {
+    const { b } = breathAt(s.t);
+    particleMat.opacity = 0.9 * amp; particles.position.copy(rig.position);
+    const pull = 0.82 * b * amp;
+    for (let i = 0; i < P_N; i++) {
+      const sway = Math.sin(time * 0.7 + pSeed[i] * 40) * 0.18 * (1 - b * amp);
+      pPos[i * 3] = lerp(pHome[i * 3], 0, pull) + sway; pPos[i * 3 + 1] = lerp(pHome[i * 3 + 1], 1.5, pull) + Math.cos(time * 0.5 + pSeed[i] * 30) * 0.1; pPos[i * 3 + 2] = lerp(pHome[i * 3 + 2], 0, pull) + sway;
+    }
+    pGeo.attributes.position.needsUpdate = true;
+  }
+  if (s.t >= SESSION_END) endWood();
+}
+
+/* =====================================================================
+   FIRE: a warm dusk in the corridor, red maples, a lantern, wind chimes and a quiet crackle
+   ===================================================================== */
+const FIRE_END = 172;
+const FIRE_TIMELINE = [
+  { t: 0,   run: () => bowl(0.55) },
+  { t: 3,   voice: 'fire_intro' },
+  { t: 16,  voice: 'fire_breath' },
+  { t: 30,  voice: 'fire_entrust' },    // "Entrust all your worries, pressure and wandering thoughts to the red maples and the glow before you. ..."
+  { t: 62,  voice: 'fire_focus' },
+  { t: 100, voice: 'fire_release' },
+  { t: 140, voice: 'closing' },
+  { t: 154, run: () => bowl(0.5) },
+];
+let fireSession = null, fireOut = 0;
+const fireGroup = new THREE.Group();
+fireGroup.visible = false; scene.add(fireGroup);
+const fireFade = [];   // [material, full opacity]: everything here fades in and out with the session
+const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; fireFade.push([mat, full]); return mat; };
+const warmGlowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,225,160,1)'); grad.addColorStop(0.25, 'rgba(255,150,70,0.65)'); grad.addColorStop(0.6, 'rgba(240,90,40,0.18)'); grad.addColorStop(1, 'rgba(220,60,30,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+
+// The lantern hangs straight ahead of where you start, under the pavilion eave. The scan is shown at SCENE_SCALE, so distance and height are scaled with it.
+const LANTERN_DIST = Math.hypot(FIRE_TARGET.x - FIRE_START.x, FIRE_TARGET.z - FIRE_START.z) * SCENE_SCALE;
+const lantern = new THREE.Group(); lantern.position.set(0, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE, -LANTERN_DIST); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
+const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
+const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
+const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
+for (const y of [-0.17, 0, 0.17]) { const r = 0.26 * Math.sqrt(1 - (y / 0.34) ** 2); const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.007, 6, 28).rotateX(Math.PI / 2), goldMat); ring.position.y = y; lantern.add(ring); }
+for (const y of [0.36, -0.36]) { const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.05, 14), darkMat); cap.position.y = y; lantern.add(cap); }
+// the cord is 14 short pieces whose opacity falls from full at the lantern to zero at the top, so it dissolves into the air instead of ending in a hard line
+for (let i = 0; i < 14; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 4), fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95 * (1 - (i + 0.5) / 14))); seg.position.y = 0.38 + 0.05 + i * 0.1; lantern.add(seg); }
+const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.025, 0.4, 6), lanternMat); tassel.position.y = -0.6; lantern.add(tassel);
+const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const glowInner = new THREE.Sprite(glowMat); glowInner.scale.set(1.0, 1.0, 1); glowInner.renderOrder = 16; lantern.add(glowInner);
+const glowHalo = new THREE.Sprite(haloMat); glowHalo.scale.set(5, 5, 1); glowHalo.renderOrder = 15; lantern.add(glowHalo);
+// wind chimes hanging under the lantern: a ring and five thin tubes that swing
+const chimes = new THREE.Group(); chimes.position.set(0, -1.0, 0); lantern.add(chimes);
+const chimeRing = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.01, 14), goldMat); chimes.add(chimeRing);
+const chimeTubes = [];
+for (let k = 0; k < 5; k++) {
+  const a = (k / 5) * Math.PI * 2, L = 0.2 + (k % 3) * 0.05, piv = new THREE.Group(); piv.position.set(Math.cos(a) * 0.07, 0, Math.sin(a) * 0.07);
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, L, 6), goldMat); tube.position.y = -L / 2; piv.add(tube); chimes.add(piv); chimeTubes.push(piv);
+}
+// embers rising from the lantern
+const EMB_N = 70, emberPos = new Float32Array(EMB_N * 3), emberCol = new Float32Array(EMB_N * 3), emberVel = new Float32Array(EMB_N * 3), emberLife = new Float32Array(EMB_N).fill(-1);
+for (let i = 0; i < EMB_N; i++) emberPos[i * 3 + 1] = -100;
+const emberGeo = new THREE.BufferGeometry();
+emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3)); emberGeo.setAttribute('color', new THREE.BufferAttribute(emberCol, 3));
+const emberMat = new THREE.PointsMaterial({ map: warmGlowTex, size: 0.16, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+const embers = new THREE.Points(emberGeo, emberMat); embers.frustumCulled = false; fireGroup.add(embers);
+// Red maple leaves, painted on a canvas: a pointed, lobed outline with fine teeth, a gradient from yellow in the middle to orange to red at the edges, and veins.
+// Three colour variants and two shapes (slender seven-lobed, broad five-lobed); each leaf gets its own size, tilt and spin.
+function mapleTexture(lobes, broad, stops) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), cx = 128, cy = 138, R = 108;
+  g.beginPath();
+  for (let k = 0; k <= 360; k++) {
+    const th = (k / 360) * Math.PI * 2 - Math.PI;                         // 0 = straight up
+    const lobe = Math.pow(Math.abs(Math.cos(lobes * th / 2)), broad ? 1.7 : 3.0);   // pointed lobes, notches between them
+    const r = R * (0.3 + 0.7 * lobe) * (1 + 0.035 * Math.sin(th * 46)) * (Math.abs(th) > 2.9 ? 0.5 : 1);   // little teeth; a notch at the stem
+    const x = cx + Math.sin(th) * r, y = cy - Math.cos(th) * r;
+    k ? g.lineTo(x, y) : g.moveTo(x, y);
+  }
+  g.closePath();
+  const grad = g.createRadialGradient(cx, cy, 5, cx, cy, R);
+  grad.addColorStop(0, stops[0]); grad.addColorStop(0.5, stops[1]); grad.addColorStop(1, stops[2]);
+  g.fillStyle = grad; g.fill();
+  g.save(); g.clip();
+  g.strokeStyle = 'rgba(120,30,10,0.45)'; g.lineWidth = 1.4;
+  for (let k = 0; k < lobes; k++) { const th = -Math.PI * 0.8 + (k / (lobes - 1)) * Math.PI * 1.6; g.beginPath(); g.moveTo(cx, cy); g.lineTo(cx + Math.sin(th) * R, cy - Math.cos(th) * R); g.stroke(); }
+  for (let k = 0; k < 220; k++) { g.fillStyle = 'rgba(200,60,20,' + Math.random() * 0.07 + ')'; g.fillRect(Math.random() * 256, Math.random() * 256, 3 + Math.random() * 6, 3 + Math.random() * 6); }
+  g.restore();
+  g.strokeStyle = '#8a2c1a'; g.lineWidth = 3; g.beginPath(); g.moveTo(cx, cy); g.quadraticCurveTo(cx - 6, cy + 40, cx - 16, cy + 62); g.stroke();   // the stem
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const mapleTextures = [
+  mapleTexture(7, false, ['#f6c24a', '#ee7a24', '#c8321c']),   // slender: yellow, orange, red edge
+  mapleTexture(5, true, ['#f8d25a', '#f09030', '#d4401e']),    // broad: yellow centre, red edge
+  mapleTexture(7, false, ['#ef8a2c', '#d8501f', '#a82418']),   // deeper red
+];
+const mapleGeo = new THREE.PlaneGeometry(1, 1);
+const mapleLeaves = [];
+for (let i = 0; i < 90; i++) {
+  const m = new THREE.Mesh(mapleGeo, new THREE.MeshBasicMaterial({ map: mapleTextures[i % 3], transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  m.visible = false; m.renderOrder = 13; m.frustumCulled = false;
+  m.userData = { ph: Math.random() * 6, vy: 0.18 + Math.random() * 0.2, spin: (Math.random() - 0.5) * 1.4, size: 0.16 + Math.random() * 0.3 };   // size 16 to 46 cm
+  fireGroup.add(m); mapleLeaves.push(m);
+}
+let mapleAcc = 0, emberAcc = 0, fireVis = 0;
+
+// sounds: wind chimes (a few bell tones with long decays) and a crackle (tiny random pops of filtered noise)
+let crackleGain = null;
+function fireAudioStart() {
+  if (!actx) return;
+  if (!crackleGain) {
+    const len = actx.sampleRate * 2, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.8;
+    crackleGain = actx.createGain(); crackleGain.gain.value = 0.0001;
+    src.connect(bp).connect(crackleGain).connect(master); src.start();
+  }
+}
+function crackle(vol = 0.14) {
+  if (!crackleGain) return;
+  const t = actx.currentTime, g = crackleGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(vol * (0.3 + Math.random() * 0.7), t); g.exponentialRampToValueAtTime(0.0001, t + 0.012 + Math.random() * 0.03);
+}
+const CHIME_NOTES = [1319, 1568, 1760, 2093, 2349];
+function chime(vol = 0.05) {
+  if (!actx) return;
+  const pan = actx.createStereoPanner(); pan.pan.value = Math.random() * 1.2 - 0.6; pan.connect(master);
+  let t = actx.currentTime + 0.02;
+  for (let i = 0, n = 2 + Math.floor(Math.random() * 4); i < n; i++) {
+    const f = CHIME_NOTES[Math.floor(Math.random() * CHIME_NOTES.length)];
+    [[1, 1], [2.76, 0.35], [5.4, 0.12]].forEach(([r, a], j) => {
+      const o = actx.createOscillator(), g = actx.createGain(); o.type = 'sine'; o.frequency.value = f * r;
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol * a, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4 / (1 + j));
+      o.connect(g).connect(pan); o.start(t); o.stop(t + 2.6);
+    });
+    t += 0.12 + Math.random() * 0.3;
+  }
+}
+
+function startFire() {
+  fireSession = { t: 0, next: 0, nextChime: 6 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
+  if (skip > 0) { fireSession.t = skip; while (fireSession.next < FIRE_TIMELINE.length && FIRE_TIMELINE[fireSession.next].t < skip) fireSession.next++; fireSession.nextChime = skip + 3; }
+  faceWorldYaw(FIRE_YAW);
+  fireGroup.position.copy(rig.position); fireGroup.rotation.y = rig.rotation.y; fireGroup.visible = true;
+  fireOut = 0; fireVis = 0; mapleAcc = 0; emberAcc = 0; mistBoost = 1;
+  mapleLeaves.slice(0, 45).forEach((m) => {   // some leaves already in the air around the bridge and the lantern when the scene begins
+    m.position.set(-3.5 + Math.random() * 7, -0.2 + Math.random() * 4.5, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true; m.userData.age = 1;
+    m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);
+  });
+  audioInit(); fireAudioStart(); windLevel(0.03, 6); rustleLevel(0);
+  playReveal(14, FIRE_START);
+}
+function clearFire() {
+  fireSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); fireGroup.visible = false;
+  mapleLeaves.forEach((m) => { m.visible = false; }); emberLife.fill(-1); windLevel(0, 2);
+  if (crackleGain) { crackleGain.gain.cancelScheduledValues(0); crackleGain.gain.setValueAtTime(0.0001, actx.currentTime); }
+  revealProgress.value = 0.02; reveal = null;
+}
+function endFire() { clearFire(); setPhase('cards'); }
+
+function updateFire(dt) {
+  const s = fireSession; if (!s) return;
+  s.t += dt;
+  while (s.next < FIRE_TIMELINE.length && s.t >= FIRE_TIMELINE[s.next].t) { const ev = FIRE_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
+  const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (FIRE_END - 24)) / 10));
+  const { b, inhale } = breathAt(s.t), cycle = BREATH_IN + BREATH_OUT;
+  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
+  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
+  fireOut += ((amp > 0.02 && !inhale ? 1 : 0) - fireOut) * (1 - Math.exp(-dt / 1.8));   // eased out-breath strength
+  fireVis = smooth01(s.t / 8) * (1 - smooth01((s.t - (FIRE_END - 10)) / 8));
+  const ghost = 0.62 + 0.38 * Math.sin(time * 0.32 + 1.3);   // the lantern slowly half fades and returns, like the bamboo
+  for (const [m, full] of fireFade) m.opacity = full * fireVis * ghost;
+  // the glow follows the breath: brighter on the in-breath, softer on the out-breath, with a flame-like flicker
+  const flicker = 0.05 * Math.sin(time * 2.3) + 0.04 * Math.sin(time * 1.4) + 0.03 * Math.sin(time * 3.7);   // slow, like a candle in still air
+  const glow = clamp(0.55 + 0.45 * b * amp + flicker, 0, 1.1);
+  glowMat.opacity = fireVis * ghost * (0.12 + 0.22 * glow); haloMat.opacity = fireVis * ghost * (0.1 + 0.25 * glow);
+  lanternMat.color.setRGB(0.62 + 0.38 * Math.min(glow, 1), 0.1 + 0.2 * Math.min(glow, 1), 0.07 + 0.05 * Math.min(glow, 1), THREE.SRGBColorSpace);   // red, glowing toward orange-red
+  lantern.rotation.z = Math.sin(time * 0.5) * 0.02 + fireOut * 0.04 * Math.sin(time * 1.0); lantern.rotation.x = fireOut * 0.03 * Math.cos(time * 0.8);
+  chimeTubes.forEach((p, k) => { p.rotation.z = (0.04 + fireOut * 0.2) * Math.sin(time * (1.1 + k * 0.17) + k); p.rotation.x = (0.04 + fireOut * 0.16) * Math.cos(time * (0.9 + k * 0.13) + k * 2); });
+  // embers: a few all the time, more on the out-breath
+  emberAcc += dt * (1.5 + 5 * fireOut);
+  while (emberAcc >= 1) {
+    emberAcc -= 1;
+    const i = emberLife.findIndex((l) => l <= 0); if (i < 0) break;
+    emberPos[i * 3] = lantern.position.x + (Math.random() - 0.5) * 0.15; emberPos[i * 3 + 1] = lantern.position.y - 0.15; emberPos[i * 3 + 2] = lantern.position.z + (Math.random() - 0.5) * 0.15;
+    emberVel[i * 3] = (Math.random() - 0.5) * 0.08; emberVel[i * 3 + 1] = 0.1 + Math.random() * 0.18; emberVel[i * 3 + 2] = (Math.random() - 0.5) * 0.08; emberLife[i] = 5 + Math.random() * 4;
+  }
+  for (let i = 0; i < EMB_N; i++) {
+    if (emberLife[i] <= 0) { emberPos[i * 3 + 1] = -100; continue; }
+    emberLife[i] -= dt;
+    emberPos[i * 3] += (emberVel[i * 3] + Math.sin(time * 0.7 + i) * 0.05) * dt; emberPos[i * 3 + 1] += emberVel[i * 3 + 1] * dt; emberPos[i * 3 + 2] += emberVel[i * 3 + 2] * dt;
+    const f = Math.min(1, emberLife[i] / 1.5);
+    emberCol[i * 3] = 1 * f; emberCol[i * 3 + 1] = 0.6 * f; emberCol[i * 3 + 2] = 0.25 * f;
+  }
+  emberGeo.attributes.position.needsUpdate = true; emberGeo.attributes.color.needsUpdate = true; emberMat.opacity = fireVis;
+  // red maple leaves let go and drift down during the out-breath
+  mapleAcc += dt * (2 + 5 * fireOut);   // a few leaves always, many more on the out-breath
+  while (mapleAcc >= 1) {
+    mapleAcc -= 1;
+    const m = mapleLeaves.find((l) => !l.visible); if (!m) break;
+    m.position.set(-3.5 + Math.random() * 7, 2.5 + Math.random() * 3, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true;   m.userData.age = 0;   // all along the bridge and out past the lantern
+    m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);   // each leaf starts at its own angle
+  }
+  for (const m of mapleLeaves) {
+    if (!m.visible) continue;
+    const u = m.userData; u.age += dt;
+    m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.1 + u.ph) * 0.35 * dt; m.position.z += Math.cos(time * 0.8 + u.ph) * 0.2 * dt;
+    m.rotation.z += u.spin * dt; m.rotation.x = 0.6 + Math.sin(time * 1.1 + u.ph) * 0.9; m.rotation.y = Math.sin(time * 0.7 + u.ph * 2) * 0.7;
+    m.material.opacity = 0.92 * fireVis * smooth01(u.age / 0.6) * smooth01((m.position.y + 0.4) / 0.8);   // they fade near the water and ground below the bridge
+    if (m.position.y < -0.4) m.visible = false;
+  }
+  // sounds
+  if (Math.random() < dt * 5) crackle();
+  if (s.t > s.nextChime) { chime(); s.nextChime = s.t + 6 + Math.random() * 7; }
+  if (s.t >= FIRE_END) endFire();
+}
+
+
+/* =====================================================================
+   WATER: a calm pond that mirrors the pavilions, small drops of rain and the rings they open
+   ===================================================================== */
+const WATER_END = 150;
+const WATER_TIMELINE = [
+  { t: 0,   run: () => bowl(0.5) },
+  { t: 3,   voice: 'water_intro' },     // "Let your awareness flow like water. Do not resist, do not cling. ..."
+  { t: 24,  voice: 'water_breath' },
+  { t: 60,  voice: 'water_rain' },
+  { t: 118, voice: 'closing' },
+  { t: 136, run: () => bowl(0.45) },
+];
+let waterSession = null, waterOut = 0, waterVis = 0, waterAcc = 0, waterNext = 0;
+// the surface: dark and clear, a sheen of sky at a low angle, and a ring on it for every drop (position and start time go to the shader)
+const WATER_DROPS = 24;
+const waterU = { uTime: { value: 0 }, uVis: { value: 0 }, uCenter: { value: new THREE.Vector2() }, uDrops: { value: Array.from({ length: WATER_DROPS }, () => new THREE.Vector3(0, 0, -100)) } };
+const waterMesh = new THREE.Mesh(new THREE.CircleGeometry(45, 64).rotateX(-Math.PI / 2), new THREE.ShaderMaterial({
+  uniforms: waterU, transparent: true, depthWrite: false, depthTest: false,
+  vertexShader: 'varying vec3 vW; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }',
+  fragmentShader: /* glsl */ `
+    uniform float uTime, uVis; uniform vec2 uCenter; uniform vec3 uDrops[${WATER_DROPS}];
+    varying vec3 vW;
+    void main() {
+      vec3 V = normalize(cameraPosition - vW);
+      float fres = pow(1.0 - clamp(V.y, 0.0, 1.0), 3.0);
+      float ring = 0.0;
+      for (int i = 0; i < ${WATER_DROPS}; i++) {
+        vec3 d = uDrops[i]; float age = uTime - d.z;
+        if (age < 0.0 || age > 8.0) continue;
+        float x = distance(vW.xz, d.xy) - age * 0.75;
+        ring += exp(-x * x * 9.0) * exp(-age * 0.5) * smoothstep(0.0, 0.15, age) * (0.5 + 0.5 * cos(x * 26.0));
+      }
+      vec3 col = mix(vec3(0.04, 0.13, 0.17), vec3(0.5, 0.6, 0.68), fres * 0.55 + 0.08) + vec3(0.75, 0.88, 0.95) * ring * 0.45;
+      float a = 0.5 + fres * 0.25 + ring * 0.4;
+      a *= 1.0 - smoothstep(16.0, 40.0, length(vW.xz - uCenter));
+      gl_FragColor = vec4(col, clamp(a * uVis, 0.0, 1.0));
+    }`,
+}));
+waterMesh.renderOrder = -4; waterMesh.visible = false; waterMesh.frustumCulled = false; scene.add(waterMesh);
+// rain: thin pale streaks falling around you
+const RAIN_N = 160, rainBase = new Float32Array(RAIN_N * 3), rainPos = new Float32Array(RAIN_N * 6), rainGeo = new THREE.BufferGeometry();
+for (let i = 0; i < RAIN_N; i++) { const a = Math.random() * 6.283, r = 8 * Math.sqrt(Math.random()); rainBase[i * 3] = Math.cos(a) * r; rainBase[i * 3 + 1] = -1 + Math.random() * 7; rainBase[i * 3 + 2] = Math.sin(a) * r; }
+rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+const rainMat = new THREE.LineBasicMaterial({ color: 0xcfe3ee, transparent: true, opacity: 0, depthWrite: false });
+const rain = new THREE.LineSegments(rainGeo, rainMat); rain.frustumCulled = false; rain.renderOrder = 12; rain.visible = false; scene.add(rain);
+// sound: the hiss of fine rain (filtered noise) and now and then one soft drop
+let rainGain = null;
+function waterAudioStart() {
+  if (!actx) return;
+  if (!rainGain) {
+    const len = actx.sampleRate * 3, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1800;
+    const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7500;
+    rainGain = actx.createGain(); rainGain.gain.value = 0.0001;
+    src.connect(hp).connect(lp).connect(rainGain).connect(master); src.start();
+  }
+}
+function plink(pan = 0, vol = 0.03) {
+  if (!actx) return;
+  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(), p = actx.createStereoPanner(), f = 900 + Math.random() * 900;
+  o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 0.6, t + 0.12);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+  p.pan.value = pan; o.connect(g).connect(p).connect(master); o.start(t); o.stop(t + 0.2);
+}
+function dropOnWater() {   // a drop somewhere on the water in front of you
+  const yaw = rig.rotation.y, a = (Math.random() - 0.5) * 2.2, dist = 1.5 + Math.random() * Math.random() * 14;
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw), dx = fx * Math.cos(a) - fz * Math.sin(a), dz = fx * Math.sin(a) + fz * Math.cos(a);
+  waterU.uDrops.value[waterNext].set(rig.position.x + dx * dist, rig.position.z + dz * dist, time); waterNext = (waterNext + 1) % WATER_DROPS;
+  if (Math.random() < 0.7) plink(clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) * 0.8, -0.8, 0.8), 0.035 / (1 + dist * 0.15));
+}
+function startWater() {
+  waterSession = { t: 0, next: 0 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
+  if (skip > 0) { waterSession.t = skip; while (waterSession.next < WATER_TIMELINE.length && WATER_TIMELINE[waterSession.next].t < skip) waterSession.next++; }
+  faceWorldYaw(WATER_YAW);
+  waterOut = 0; waterVis = 0; waterAcc = 0; mistBoost = 1;
+  waterU.uDrops.value.forEach((d) => d.set(0, 0, -100));
+  waterMesh.position.set(WATER_START.x, waterWorldY(), WATER_START.z); waterU.uCenter.value.set(WATER_START.x, WATER_START.z); waterMesh.visible = true;
+  reflGroup.visible = true; syncReflection(); rain.visible = true;
+  audioInit(); waterAudioStart(); windLevel(0.02, 6); rustleLevel(0);
+  playReveal(14, WATER_START);
+}
+function clearWater() {
+  waterSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', '');
+  waterMesh.visible = false; reflGroup.visible = false; rain.visible = false; windLevel(0, 2);
+  if (rainGain) { rainGain.gain.cancelScheduledValues(0); rainGain.gain.setTargetAtTime(0.0001, actx.currentTime, 0.4); }
+  revealProgress.value = 0.02; reveal = null;
+}
+function endWater() { clearWater(); setPhase('cards'); }
+function updateWater(dt) {
+  const s = waterSession; if (!s) return;
+  s.t += dt;
+  while (s.next < WATER_TIMELINE.length && s.t >= WATER_TIMELINE[s.next].t) { const ev = WATER_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
+  const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (WATER_END - 24)) / 10));
+  const { inhale } = breathAt(s.t), cycle = BREATH_IN + BREATH_OUT, tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
+  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
+  waterOut += ((amp > 0.02 && !inhale ? 1 : 0) - waterOut) * (1 - Math.exp(-dt / 1.8));
+  waterVis = smooth01(s.t / 8) * (1 - smooth01((s.t - (WATER_END - 10)) / 8));
+  waterU.uTime.value = time; waterU.uVis.value = waterVis;
+  waterAcc += dt * (1.6 + 2.4 * waterOut);   // a few drops always, more on the out-breath
+  while (waterAcc >= 1) { waterAcc -= 1; dropOnWater(); }
+  for (let i = 0; i < RAIN_N; i++) {
+    let y = rainBase[i * 3 + 1] - 5.5 * dt; if (y < -1) { y += 7; const a = Math.random() * 6.283, r = 8 * Math.sqrt(Math.random()); rainBase[i * 3] = Math.cos(a) * r; rainBase[i * 3 + 2] = Math.sin(a) * r; }
+    rainBase[i * 3 + 1] = y;
+    const x = rig.position.x + rainBase[i * 3], yy = rig.position.y + y, z = rig.position.z + rainBase[i * 3 + 2];
+    rainPos.set([x, yy, z, x + 0.04, yy + 0.3, z], i * 6);
+  }
+  rainGeo.attributes.position.needsUpdate = true; rainMat.opacity = 0.22 * waterVis;
+  if (rainGain) rainGain.gain.setTargetAtTime(0.09 * waterVis * (0.85 + 0.3 * waterOut), actx.currentTime, 0.5);
+  if (s.t >= WATER_END) endWater();
+}
+
+/* =====================================================================
+   PART 5: choosing a card (pinch in VR, click on a desktop)
+   ===================================================================== */
+// In VR a pinch of thumb and forefinger counts as a "select", exactly like pressing a controller trigger,
+// and the hand has a pointing ray, so one piece of code handles both. Hand tracking must be switched on in the Quest settings.
+let phaseChangedAt = -10;   // time of the last switch between places
+// Palms together (hands in prayer) for 3 seconds leaves a scene. Read from the hand joints: both wrists, palms and middle fingertips close together,
+// the fingers stretched out and pointing up. A ring of small dots fills up while you hold it.
+const PRAYER_SECONDS = 3;
+let prayerHeld = 0, prayerLost = 0;
+const PV = Array.from({ length: 6 }, () => new THREE.Vector3()), _mid = new THREE.Vector3(), _cr = new THREE.Vector3(), _cu = new THREE.Vector3();
+// the ring that fills while you hold: the same pure white gradient as the circle on the ground (clear edge, fading toward the middle), turned to face you
+const prayerTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.5, 'rgba(255,255,255,0.05)'); grad.addColorStop(0.93, 'rgba(255,255,255,0.75)'); grad.addColorStop(0.975, 'rgba(255,255,255,0.9)'); grad.addColorStop(0.985, 'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+  return new THREE.CanvasTexture(c);
+})();
+const prayerRing = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: prayerTex, transparent: true, depthWrite: false, depthTest: false, opacity: 0 }));
+prayerRing.frustumCulled = false; prayerRing.renderOrder = 40; prayerRing.visible = false; scene.add(prayerRing);
+function handJoint(i, name) { const h = renderer.xr.getHand(i), j = h.joints && h.joints[name]; return j && j.visible ? j : null; }
+function palmsTogether() {
+  const names = ['wrist', 'middle-finger-metacarpal', 'middle-finger-tip'], J = [];
+  for (const i of [0, 1]) for (const n of names) { const j = handJoint(i, n); if (!j) return false; J.push(j); }
+  J.forEach((j, k) => j.getWorldPosition(PV[k]));
+  const [wL, pL, tL, wR, pR, tR] = PV;
+  const near = wL.distanceTo(wR) < 0.16 && pL.distanceTo(pR) < 0.10 && tL.distanceTo(tR) < 0.10;
+  const stretched = wL.distanceTo(tL) > 0.12 && wR.distanceTo(tR) > 0.12;       // fingers out, not a fist
+  const up = tL.y - wL.y > 0.05 && tR.y - wR.y > 0.05;                            // fingers pointing up
+  _mid.copy(tL).add(tR).multiplyScalar(0.5);
+  return near && stretched && up;
+}
+function updatePrayer(dt) {
+  if (!(phase === 'wood' || phase === 'fire' || phase === 'water') || !renderer.xr.isPresenting) { prayerHeld = 0; prayerRing.visible = false; return; }
+  if (palmsTogether()) { prayerHeld += dt; prayerLost = 0; }
+  else { prayerLost += dt; if (prayerLost > 0.35) prayerHeld = 0; }
+  const k = Math.min(1, prayerHeld / PRAYER_SECONDS);
+  if (k > 0 && prayerLost <= 0.35) {   // the ring grows and brightens as the three seconds pass
+    const e = k * k * (3 - 2 * k);
+    prayerRing.visible = true; prayerRing.position.set(_mid.x, _mid.y + 0.1, _mid.z); camera.getWorldQuaternion(prayerRing.quaternion);
+    prayerRing.scale.setScalar(0.1 + 0.14 * e); prayerRing.material.opacity = 0.9 * e;
+  } else prayerRing.visible = false;
+  if (prayerHeld >= PRAYER_SECONDS) { prayerHeld = 0; prayerRing.visible = false; exitSession(); }
+}
+function exitSession() { if (phase === 'wood') endWood(); else if (phase === 'fire') endFire(); else if (phase === 'water') endWater(); }
+function checkExit() {
+  if (!(phase === 'wood' || phase === 'fire' || phase === 'water') || !renderer.xr.isPresenting) return;
+  const c = [0, 1].map((i) => renderer.xr.getController(i).userData);
+  const grip = c.some((u) => u.squeezeAt != null && time - u.squeezeAt > 1.0);
+  if (grip) { c.forEach((u) => { u.heldAt = null; u.squeezeAt = null; }); exitSession(); }
+}
+let hover = null, sel = null, lastHover = null, capHold = 0;   // capHold: the caption is busy (welcome, notice) until this time
+const FLOAT = 0.07;   // metres the cards rise and fall; raise it for a stronger float
+const mouse = { ndc: new THREE.Vector2(), on: false };
+function cardUnder(origin, direction) {
+  ray.set(origin, direction); ray.far = 60;
+  const h = ray.intersectObjects(hitMeshes, false)[0];
+  return h ? h.object.userData.cardOf : null;
+}
+function chooseCard(card) {
+  if (sel || phase !== 'cards' || !card) return;
+  audioInit();
+  if (card.userData.id !== 'wood' && card.userData.id !== 'fire' && card.userData.id !== 'water') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
+  sel = { card, t: 0 };
+  setCaption('', ''); endWelcome();
+}
+function updateCards(dt) {
+  if (!sel) {
+    hover = null;
+    if (renderer.xr.isPresenting) {
+      for (const i of [0, 1]) {
+        const c = renderer.xr.getController(i);
+        if (!c.userData.connected) continue;
+        c.getWorldPosition(_o); c.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
+        hover = hover || cardUnder(_o, _d);
+      }
+    } else if (mouse.on) {
+      ray.setFromCamera(mouse.ndc, camera); ray.far = 60;
+      const h = ray.intersectObjects(hitMeshes, false)[0]; hover = h ? h.object.userData.cardOf : null;
+    }
+  }
+  if (hover !== lastHover) {   // under the cards, the card you point at is described in a line of text
+    lastHover = hover;
+    if (time >= capHold && !sel) setCaption(hover ? ELEMENTS.find((e) => e.id === hover.userData.id).note : '', '');
+  }
+  for (const c of cards.children) {
+    const u = c.userData, ph = time * 0.55 + u.phase, chosen = sel && c === sel.card;
+    // floating: a slow rise and fall; the card half-appears and returns, and its glow breathes, to draw the eye
+    if (!chosen) c.position.y = u.baseY + Math.sin(ph) * FLOAT * 2;
+    const shimmer = 0.68 + 0.2 * Math.sin(time * 0.8 + u.phase * 2.1);
+    const glow = 0.22 + 0.16 * Math.sin(time * 1.1 + u.phase * 1.7);
+    if (!chosen) c.scale.setScalar(lerp(c.scale.x, c === hover ? u.k * 1.12 : u.k, 0.15));
+    c.material.opacity = (c === hover ? 1 : shimmer) * (sel && !chosen ? 1 - smooth01(sel.t / 1.4) : 1);
+    u.glow.material.opacity = (c === hover ? 0.6 : glow) * (sel && !chosen ? 1 - smooth01(sel.t / 1.4) : 1);
+  }
+  if (sel) {
+    sel.t += dt;
+    const k = clamp(sel.t / 2.8), c = sel.card;
+    // the chosen card swells and brightens while the whole view fades to mist; then the meditation begins and the mist clears
+    c.scale.setScalar(lerp(c.userData.k, c.userData.k * 1.5, smooth01(k)));
+    c.material.opacity = 1; c.userData.glow.material.opacity = 0.7;
+    veilA = smooth01((k - 0.25) / 0.75);
+    if (k >= 1) { const id = c.userData.id; sel = null; veilA = 1; setPhase(id); }
+  }
+}
+function resetCards() {
+  sel = null; hover = null;
+  layoutCards();
+  for (const c of cards.children) { c.rotation.z = 0; c.material.opacity = 0.7; }
+}
+for (const i of [0, 1]) {
+  const ctrl = renderer.xr.getController(i);
+  ctrl.addEventListener('connected', () => { ctrl.userData.connected = true; });
+  ctrl.addEventListener('disconnected', () => { ctrl.userData.connected = false; });
+  // holding one controller's grip button for 1 s leaves a scene (with hand tracking: palms together, see updatePrayer)
+  ctrl.addEventListener('selectstart', () => { ctrl.userData.heldAt = time; });
+  ctrl.addEventListener('selectend', () => { ctrl.userData.heldAt = null; });
+  ctrl.addEventListener('squeezestart', () => { ctrl.userData.squeezeAt = time; });
+  ctrl.addEventListener('squeezeend', () => { ctrl.userData.squeezeAt = null; });
+  ctrl.addEventListener('select', () => {
+    if (phase !== 'cards' || time - phaseChangedAt < 1.2) return;
+    ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
+    chooseCard(cardUnder(_o, _d));
+  });
+}
+renderer.domElement.addEventListener('pointermove', (e) => {
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); mouse.on = true;
+});
+renderer.domElement.addEventListener('pointerleave', () => { mouse.on = false; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (phase !== 'cards' || renderer.xr.isPresenting || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 5) return;
+  if (!welcomed) welcome();
+  ray.setFromCamera(mouse.ndc, camera); ray.far = 60;
+  const h = ray.intersectObjects(hitMeshes, false)[0];
+  if (h) chooseCard(h.object.userData.cardOf);
+});
+// the first click or the VR entry unlocks sound (browsers do not allow sound before that), then the welcome plays once
+let welcomed = false;
+let welcomeTimers = [];
+function welcome() {
+  welcomed = true; audioInit(); bowl(0.45);
+  capHold = time + 14;
+  welcomeTimers.push(setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, press your palms together for three seconds.', ''); welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000)); }, 3000));
+}
+// choosing a card ends the welcome: the text is already gone, the voice fades over 1.5 s and does not carry into the session
+function endWelcome() {
+  welcomeTimers.forEach(clearTimeout); welcomeTimers = []; capHold = 0;
+  const a = voices.welcome; if (!a || a.paused) return;
+  const t0 = performance.now(), iv = setInterval(() => {
+    const k = (performance.now() - t0) / 1500;
+    if (k >= 1) { clearInterval(iv); a.pause(); a.volume = 1; } else a.volume = 1 - k;
+  }, 50);
+}
+
+/* =====================================================================
+   PART 6: switching places, camera, VR, main loop
+   ===================================================================== */
+const DESK_POS = new THREE.Vector3(GARDEN.x + 31, 18.7, GARDEN.z + 31);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(GARDEN.x, 1, GARDEN.z);
+controls.enableDamping = true;
+controls.enabled = false;
+
+// Looking around on a desktop inside the card room or the meditation: drag to turn your head (yaw = left/right, pitch = up/down).
+let yaw = 0, pitch = 0;
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (phase === 'garden' || !e.buttons || renderer.xr.isPresenting) return;
+  yaw += e.movementX * 0.004; pitch = clamp(pitch + e.movementY * 0.004, -1.2, 1.2);
+});
+
+// the veil: a pale mist-coloured sphere around the head; its opacity is veilA. It rises while a card is chosen and clears after the new scene starts.
+const veil = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), new THREE.MeshBasicMaterial({ color: 0xd2dbd7, side: THREE.BackSide, transparent: true, opacity: 0, depthTest: false, depthWrite: false }));
+veil.renderOrder = 100; veil.frustumCulled = false; veil.visible = false; camera.add(veil);
+let veilA = 0;
+function updateVeil(dt) {
+  if (!sel) veilA = Math.max(0, veilA - dt / 3.5);
+  veil.material.opacity = veilA; veil.visible = veilA > 0.002;
+}
+const phCards = $('phCards'), phWood = $('phWood'), phFire = $('phFire'), phWater = $('phWater'), phGarden = $('phGarden');
+function setPhase(p) {
+  if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
+  if (phase === 'fire' && p !== 'fire' && fireSession) clearFire();
+  if (phase === 'water' && p !== 'water' && waterSession) clearWater();
+  phase = p; phaseChangedAt = time;
+  applySceneScale();
+  reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
+  mist.visible = p !== 'garden'; cards.visible = p === 'cards'; scan.visible = true;
+  [[phCards, 'cards'], [phWood, 'wood'], [phFire, 'fire'], [phWater, 'water'], [phGarden, 'garden']].forEach(([b, name]) => b.setAttribute('aria-pressed', p === name ? 'true' : 'false'));
+  document.querySelectorAll('.garden-only').forEach((b) => { b.style.display = p === 'garden' ? 'inline-block' : 'none'; });
+  controls.enabled = p === 'garden' && !renderer.xr.isPresenting;
+  rig.rotation.y = 0; yaw = 0; pitch = 0;
+  if (p === 'cards') {
+    needAlign = 10;   // once the headset has a pose, turn the rig so the Wood card is straight ahead
+    resetCards();
+    scene.background.set(0x0a1112);
+    rig.position.copy(CARD_START); camera.position.set(0, 1.6, 0); yaw = CARDS_YAW; veilA = 1;
+    revealProgress.value = 0.02; reveal = null; startCardsReveal();
+    statusEl.textContent = 'Click a card, or pinch it in VR';
+  } else if (p === 'wood') {
+    scene.background.set(0x0a1112);
+    rig.position.copy(VR_START); rig.rotation.y = VR_YAW; camera.position.set(0, 1.5, 0);
+    statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
+    startWood();
+  } else if (p === 'fire') {
+    scene.background.set(0x0a1112);
+    rig.position.copy(FIRE_START); rig.rotation.y = FIRE_YAW; camera.position.set(0, 1.5, 0);
+    statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
+    startFire();
+  } else if (p === 'water') {
+    scene.background.set(0x0a1112);
+    rig.position.copy(WATER_START); rig.rotation.y = WATER_YAW; camera.position.set(0, 1.5, 0);
+    statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
+    startWater();
+  } else {
+    scene.background.set(0xe7ddc9);
+    rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update();
+    playReveal(10);
+    statusEl.textContent = scanReady ? 'Drag to look around, scroll to zoom' : 'Loading scan...';
+  }
+}
+phCards.addEventListener('click', () => setPhase('cards'));
+phWood.addEventListener('click', () => { audioInit(); setPhase('wood'); });
+phFire.addEventListener('click', () => { audioInit(); setPhase('fire'); });
+phWater.addEventListener('click', () => { audioInit(); setPhase('water'); });
+phGarden.addEventListener('click', () => setPhase('garden'));
+$('replay').addEventListener('click', () => playReveal(10));
+const scaleEl = $('scale');
+function showScale() { scaleEl.value = SCENE_SCALE; $('scaleVal').textContent = SCENE_SCALE.toFixed(2); }
+scaleEl.addEventListener('input', () => { SCENE_SCALE = +scaleEl.value; applySceneScale(); showScale(); });
+showScale();
+const personBtn = $('person');
+personBtn.addEventListener('click', () => {
+  reference.visible = !reference.visible; personBtn.setAttribute('aria-pressed', reference.visible ? 'true' : 'false');
+  reference.position.copy(VR_START);
+});
+
+const vrBtn = VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] });
+$('vrSlot').appendChild(vrBtn);
+renderer.xr.addEventListener('sessionstart', () => {
+  controls.enabled = false;
+  if (phase === 'cards') { rig.position.copy(CARD_START); rig.rotation.y = 0; needAlign = 10; if (!welcomed) welcome(); }
+});
+renderer.xr.addEventListener('sessionend', () => { setPhase(phase === 'garden' ? 'garden' : 'cards'); });
+
+function resize() {
+  const w = stage.clientWidth || window.innerWidth, h = stage.clientHeight || window.innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+setPhase('cards');
+// ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
+{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'fire' || ph === 'water' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
+
+let last = performance.now();
+const _cam = new THREE.Vector3();
+renderer.setAnimationLoop((now) => {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
+  mistUniforms.time.value = time;
+  // dusk and warm colours ease in for Fire and out again afterwards
+  mistUniforms.dusk.value += ((phase === 'fire' ? 1 : 0) - mistUniforms.dusk.value) * (1 - Math.exp(-dt * 0.8));
+  { const wg = phase === 'fire' ? 1 : 0, dw = (wg - revealWarm.value) * (1 - Math.exp(-dt * 0.8)); if (Math.abs(dw) > 0.001) { revealWarm.value += dw; scan.updateVersion(); if (refl) refl.updateVersion(); } }
+  // the mist sphere follows the viewer so the horizon never gets closer
+  camera.getWorldPosition(_cam); mist.position.copy(_cam);
+
+  if (reveal) {
+    reveal.t += dt;
+    const k = clamp(reveal.t / reveal.dur), e = k * k * (3 - 2 * k);
+    revealProgress.value = lerp(0.02, reveal.to, e);
+    revealTime.value = reveal.t;
+    scan.updateVersion(); if (refl) refl.updateVersion();
+    if (k >= 1) reveal = null;
+  }
+  updateNearMist(dt); updateVeil(dt);
+  checkExit(); updatePrayer(dt);
+  if (needAlign > 0 && renderer.xr.isPresenting && phase === 'cards' && --needAlign === 0) faceWorldYaw(CARDS_YAW);
+  if (phase === 'cards') updateCards(dt);
+  else if (phase === 'wood') { updateWood(dt); walk(dt); }
+  else if (phase === 'fire') { updateFire(dt); walk(dt); }
+  else if (phase === 'water') { updateWater(dt); walk(dt); }
+  else { walk(dt); controls.update(); }
+  if (phase !== 'garden') followHead(dt);
+  updateBody(dt);
+  if (phase !== 'garden' && !renderer.xr.isPresenting) camera.rotation.set(pitch, yaw, 0, 'YXZ');
+  renderer.render(scene, camera);
+});
+
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape') exitSession(); });   // on a desktop, Esc leaves a meditation
+window.scan = scan; // for trying things in the browser console
+</script>
+</body>
+</html>
