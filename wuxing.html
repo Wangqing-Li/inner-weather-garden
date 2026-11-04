@@ -386,8 +386,9 @@ const ray = new THREE.Raycaster();
 const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
 // Fire: you stand in the middle of the arch bridge at (-21.1, 26.6) and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.2 m away.
 // The bridge top is higher than the walkway floor (-1.2): y = 0.0 is a first guess. ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
-const FIRE_START = new THREE.Vector3(-21.1, 0.0, 26.6), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8), FIRE_LANTERN_Y = 1.4;
+const FIRE_START = new THREE.Vector3(-21.1, 0.0, 26.6), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.4;
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
+{ const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
 const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the lantern
 let VR_YAW = Math.atan2(-(GARDEN.x - VR_START.x), -(GARDEN.z - VR_START.z));
 const marker = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf08a4b, depthTest: false }));
@@ -1234,7 +1235,7 @@ function chooseCard(card) {
   audioInit();
   if (card.userData.id !== 'wood' && card.userData.id !== 'fire') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
   sel = { card, t: 0 };
-  setCaption('', '');
+  setCaption('', ''); endWelcome();
 }
 function updateCards(dt) {
   if (!sel) {
@@ -1308,9 +1309,20 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 });
 // the first click or the VR entry unlocks sound (browsers do not allow sound before that), then the welcome plays once
 let welcomed = false;
+let welcomeTimers = [];
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  capHold = time + 14; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, press your palms together for three seconds.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000); }, 3000);
+  capHold = time + 14;
+  welcomeTimers.push(setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, press your palms together for three seconds.', ''); welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000)); }, 3000));
+}
+// choosing a card ends the welcome: the text is already gone, the voice fades over 1.5 s and does not carry into the session
+function endWelcome() {
+  welcomeTimers.forEach(clearTimeout); welcomeTimers = []; capHold = 0;
+  const a = voices.welcome; if (!a || a.paused) return;
+  const t0 = performance.now(), iv = setInterval(() => {
+    const k = (performance.now() - t0) / 1500;
+    if (k >= 1) { clearInterval(iv); a.pause(); a.volume = 1; } else a.volume = 1 - k;
+  }, 50);
 }
 
 /* =====================================================================

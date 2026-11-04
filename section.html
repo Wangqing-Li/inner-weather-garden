@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>China Garden - cross-section</title>
+<style>
+/* A side view of the scan: a thin slice along the line A to B, seen from the side. Hover to read the height y, click to pin it. */
+html, body { margin: 0; background: #2a2f2c; color: #f2f5f6; font-family: 'Helvetica Neue', Arial, system-ui, sans-serif; }
+#wrap { position: relative; display: inline-block; margin: 12px; }
+canvas { display: block; cursor: crosshair; background: #ece6da; }
+.panel { position: fixed; right: 12px; top: 12px; width: 310px; padding: 12px 14px; border-radius: 12px; background: rgba(20, 27, 32, .88); font-size: 13px; line-height: 1.6; }
+.panel input { width: 56px; background: #fff1; color: inherit; border: 1px solid #fff4; border-radius: 4px; padding: 2px 4px; }
+.panel button { margin-top: 6px; }
+@media (max-width: 1000px) { .panel { position: static; width: auto; margin: 12px; } }
+code { background: rgba(255,255,255,.12); padding: 1px 5px; border-radius: 4px; word-break: break-all; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c" width="1100" height="900"></canvas></div>
+<div class="panel">
+  <div id="status">loading the scan...</div>
+  <hr style="border:0;border-top:1px solid rgba(255,255,255,.2)">
+  <div><span class="dot" style="background:#ff5a3c"></span>A, where you stand: x <input id="ax" value="-21.1"> z <input id="az" value="26.6"></div>
+  <div><span class="dot" style="background:#ff9a3c"></span>B, the lantern: x <input id="bx" value="-19.3"> z <input id="bz" value="22.8"></div>
+  <div>half width of the slice (m) <input id="hw" value="1.0"> <button id="go">Redraw</button></div>
+  <hr style="border:0;border-top:1px solid rgba(255,255,255,.2)">
+  <div><b>Hover</b>: <span id="pos">-</span></div>
+  <div><b>Stand y</b> (click the bridge at the A column): <span id="sy">-</span></div>
+  <div><b>Lantern y</b> (click where it should hang, under the eave): <span id="ly">-</span></div>
+  <div style="margin-top:6px">Link: <code id="link">click twice first</code></div>
+  <div style="margin-top:6px;color:#aab">Left of the red line is behind you, right of the orange line is past the lantern. Grid every 1 m; y = 0 is the thick line. The first click sets stand y, the second sets lantern y, then it starts again.</div>
+</div>
+<script>
+const PPM = 100, D0 = -3, Y1 = 6.5;                       // pixels per metre, along-line distance at the left edge, y at the top edge
+const c = document.getElementById('c'), g = c.getContext('2d');
+const $ = (id) => document.getElementById(id);
+let P = null;                                              // world positions x, y, z and colours r, g, b of every splat
+// the scan file is a gaussian-splat ply: 17 floats per splat. The viewer turns it with rotation.x = -90 deg, so world = (x, z, -y).
+async function load() {
+  const buf = await (await fetch('assets/china-garden-lod4.ply')).arrayBuffer();
+  const head = new TextDecoder().decode(new Uint8Array(buf, 0, 1500));
+  const n = +head.match(/element vertex (\d+)/)[1], start = head.indexOf('end_header\n') + 11, f = new Float32Array(buf, start, n * 17);
+  P = { n, x: new Float32Array(n), y: new Float32Array(n), z: new Float32Array(n), col: new Uint8ClampedArray(n * 3) };
+  let k = 0;
+  for (let i = 0; i < n; i++) {
+    const o = i * 17;
+    if (1 / (1 + Math.exp(-f[o + 9])) < 0.35) continue;    // skip nearly transparent splats
+    P.x[k] = f[o]; P.y[k] = f[o + 2]; P.z[k] = -f[o + 1];
+    for (let j = 0; j < 3; j++) P.col[k * 3 + j] = (0.5 + 0.2820948 * f[o + 6 + j]) * 255;
+    k++;
+  }
+  P.n = k; $('status').textContent = k + ' splats loaded'; draw();
+}
+let pins = [];                                             // [along, y] clicks: stand, then lantern
+const val = (id) => parseFloat($(id).value);
+function line() {
+  const ax = val('ax'), az = val('az'), bx = val('bx'), bz = val('bz'), L = Math.hypot(bx - ax, bz - az);
+  return { ax, az, ux: (bx - ax) / L, uz: (bz - az) / L, L, hw: val('hw') };
+}
+const px = (d) => (d - D0) * PPM, py = (y) => (Y1 - y) * PPM;
+function draw() {
+  g.clearRect(0, 0, c.width, c.height);
+  if (!P) return;
+  const { ax, az, ux, uz, L, hw } = line();
+  for (let i = 0; i < P.n; i++) {
+    const dx = P.x[i] - ax, dz = P.z[i] - az, d = dx * ux + dz * uz, s = -dx * uz + dz * ux;
+    if (Math.abs(s) > hw || d < D0 || d > D0 + c.width / PPM) continue;
+    g.fillStyle = 'rgb(' + P.col[i * 3] + ',' + P.col[i * 3 + 1] + ',' + P.col[i * 3 + 2] + ')';
+    g.fillRect(px(d) - 1.5, py(P.y[i]) - 1.5, 3, 3);
+  }
+  g.font = '11px Helvetica, Arial'; g.textBaseline = 'top';
+  for (let y = Math.ceil(Y1 - c.height / PPM); y <= Y1; y++) { g.strokeStyle = y === 0 ? 'rgba(0,0,0,.7)' : 'rgba(0,0,0,.25)'; g.lineWidth = y === 0 ? 2 : 1; g.beginPath(); g.moveTo(0, py(y)); g.lineTo(c.width, py(y)); g.stroke(); g.fillStyle = '#000'; g.fillText('y ' + y, 2, py(y) + 2); }
+  for (let d = Math.ceil(D0); d < D0 + c.width / PPM; d++) { g.strokeStyle = 'rgba(0,0,0,.18)'; g.lineWidth = 1; g.beginPath(); g.moveTo(px(d), 0); g.lineTo(px(d), c.height); g.stroke(); g.fillStyle = '#000'; g.fillText(d + ' m', px(d) + 2, c.height - 14); }
+  for (const [d, col, name] of [[0, '#ff5a3c', 'A: you'], [L, '#ff9a3c', 'B: lantern']]) { g.strokeStyle = col; g.lineWidth = 3; g.beginPath(); g.moveTo(px(d), 0); g.lineTo(px(d), c.height); g.stroke(); g.fillStyle = col; g.font = '14px Helvetica, Arial'; g.fillText(name, px(d) + 5, 14); }
+  pins.forEach(([d, y], i) => { g.strokeStyle = '#ff00aa'; g.lineWidth = 3; g.beginPath(); g.arc(px(d), py(y), 9, 0, 7); g.moveTo(px(d) - 16, py(y)); g.lineTo(px(d) + 16, py(y)); g.stroke(); g.fillStyle = '#ff00aa'; g.fillText(i ? 'lantern y ' + y.toFixed(2) : 'stand y ' + y.toFixed(2), px(d) + 12, py(y) - 18); });
+}
+const at = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * c.width / r.width / PPM + D0, Y1 - (e.clientY - r.top) * c.height / r.height / PPM]; };
+c.addEventListener('mousemove', (e) => { const [d, y] = at(e); $('pos').textContent = 'along ' + d.toFixed(2) + ' m, y ' + y.toFixed(2); });
+c.addEventListener('click', (e) => {
+  const [d, y] = at(e);
+  if (pins.length >= 2) pins = [];
+  pins.push([d, y]);
+  $('sy').textContent = pins[0][1].toFixed(2); $('ly').textContent = pins[1] ? pins[1][1].toFixed(2) : '-';
+  if (pins[1]) { const l = line(); $('link').textContent = 'wuxing.html?phase=fire&fire=' + l.ax + ',' + pins[0][1].toFixed(2) + ',' + l.az + '&lanternY=' + pins[1][1].toFixed(2); }
+  draw();
+});
+$('go').addEventListener('click', draw);
+load();
+</script>
+</body>
+</html>
