@@ -633,9 +633,21 @@ for (const i of [0, 1]) {
 // so the fingers bend as yours do (the model's hand is one stiff mesh and cannot).
 const HAND_FINGERS = ['thumb', 'index-finger', 'middle-finger', 'ring-finger', 'pinky-finger'];
 const HAND_CHAINS = HAND_FINGERS.map((f) => ['wrist', ...(f === 'thumb' ? ['metacarpal', 'phalanx-proximal', 'phalanx-distal', 'tip'] : ['metacarpal', 'phalanx-proximal', 'phalanx-intermediate', 'phalanx-distal', 'tip']).map((n) => f + '-' + n)]);
+// Overlapping see-through tubes would show every joint as a darker spot. So each piece is drawn twice: first only into the depth buffer (all pieces, order 14),
+// then in colour (order 15), where a pixel passes only for the nearest surface. Every pixel of the hand is therefore blended once and the hand looks like one smooth shape.
 const handBoneMat = new THREE.MeshBasicMaterial({ color: 0xe9e2d8, transparent: true, opacity: 0.55, depthWrite: false });
+const handDepthMat = new THREE.MeshBasicMaterial({ transparent: true, colorWrite: false, depthWrite: true });
 const boneGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true), ballGeo = new THREE.SphereGeometry(1, 8, 6);
-const _hA = new THREE.Vector3(), _hB = new THREE.Vector3(), _hUp = new THREE.Vector3(0, 1, 0);
+const _hMid = new THREE.Vector3(), _hQ = new THREE.Quaternion(), _hA = new THREE.Vector3(), _hB = new THREE.Vector3(), _hUp = new THREE.Vector3(0, 1, 0);
+// a piece and its depth-only twin; both always get the same transform, so their depths match exactly
+function handPair(geo, grp) {
+  const col = new THREE.Mesh(geo, handBoneMat), dep = new THREE.Mesh(geo, handDepthMat);
+  col.renderOrder = 15; dep.renderOrder = 14; col.frustumCulled = dep.frustumCulled = false; grp.add(dep, col);
+  col.userData.twin = dep; return col;
+}
+function placeHand(m, pos, quat, sx, sy, sz) {
+  for (const o of [m, m.userData.twin]) { o.position.copy(pos); if (quat) o.quaternion.copy(quat); o.scale.set(sx, sy, sz); }
+}
 function updateJointHand(i) {
   const hand = renderer.xr.getHand(i), ctrl = renderer.xr.getController(i);
   if (!hand.joints) return;
@@ -643,23 +655,23 @@ function updateJointHand(i) {
     const grp = new THREE.Group(); grp.renderOrder = 15; scene.add(grp);
     const bones = [], balls = {};
     for (const chain of HAND_CHAINS) for (let k = 0; k < chain.length; k++) {
-      if (!balls[chain[k]]) { const m = new THREE.Mesh(ballGeo, handBoneMat); m.renderOrder = 15; m.frustumCulled = false; grp.add(m); balls[chain[k]] = m; }
-      if (k) { const m = new THREE.Mesh(boneGeo, handBoneMat); m.renderOrder = 15; m.frustumCulled = false; grp.add(m); bones.push([m, chain[k - 1], chain[k]]); }
+      if (!balls[chain[k]]) balls[chain[k]] = handPair(ballGeo, grp);
+      if (k) bones.push([handPair(boneGeo, grp), chain[k - 1], chain[k]]);
     }
     hand.userData.skin = { grp, bones, balls };
   }
   const { grp, bones, balls } = hand.userData.skin, wrist = hand.joints['wrist'];
   grp.visible = !!(ctrl.userData.isHand && wrist && wrist.visible);
   if (!grp.visible) return;
-  for (const name in balls) { const j = hand.joints[name]; if (!j) continue; j.getWorldPosition(_hA); balls[name].position.copy(_hA); balls[name].scale.setScalar((j.jointRadius || 0.008) * 1.1); }
+  for (const name in balls) { const j = hand.joints[name]; if (!j) continue; j.getWorldPosition(_hA); const r = (j.jointRadius || 0.008) * 1.1; placeHand(balls[name], _hA, null, r, r, r); }
   for (const [m, a, b] of bones) {
     const ja = hand.joints[a], jb = hand.joints[b]; if (!ja || !jb) continue;
     ja.getWorldPosition(_hA); jb.getWorldPosition(_hB);
     const len = _hA.distanceTo(_hB); if (len < 1e-4) continue;
-    m.position.copy(_hA).add(_hB).multiplyScalar(0.5);
-    m.quaternion.setFromUnitVectors(_hUp, _hB.sub(_hA).normalize());
+    _hMid.copy(_hA).add(_hB).multiplyScalar(0.5);
+    _hQ.setFromUnitVectors(_hUp, _hB.sub(_hA).normalize());
     const r = ((ja.jointRadius || 0.008) + (jb.jointRadius || 0.008)) * 0.5 * 1.05;
-    m.scale.set(r, len, r);
+    placeHand(m, _hMid, _hQ, r, len, r);
   }
 }
 function updateBody(dt) {
