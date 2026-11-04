@@ -82,6 +82,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { SparkRenderer, SplatMesh, dyno } from '@sparkjsdev/spark';
 
 const $ = (id) => document.getElementById(id);
@@ -109,6 +110,7 @@ scene.add(spark);
 // 'cards' = misty room with five cards, 'wood' = the Wood meditation (scan appears out of the mist),
 // 'garden' = a desktop-only overview of the scan for checking and picking points
 let phase = 'cards';
+let time = 0;   // seconds since the page opened, used by the animations
 
 /* =====================================================================
    PART 1: the misty dream room (no scan here)
@@ -630,7 +632,7 @@ function updateBody(dt) {
 /* =====================================================================
    PART 4: sound (made in code with the Web Audio API), a caption that follows your gaze, and the breathing particles
    ===================================================================== */
-let actx = null, master = null, windGain = null;
+let actx = null, master = null, windGain = null, rustleGain = null;
 function audioInit() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   actx = new (window.AudioContext || window.webkitAudioContext)();
@@ -641,7 +643,10 @@ function audioInit() {
   const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
   const band = actx.createBiquadFilter(); band.type = 'bandpass'; band.frequency.value = 650; band.Q.value = 0.6;
   const rustle = actx.createBiquadFilter(); rustle.type = 'highpass'; rustle.frequency.value = 3200;
-  const rustleGain = actx.createGain(); rustleGain.gain.value = 0.12;
+  rustleGain = actx.createGain(); rustleGain.gain.value = 0.1;
+  // the quick "sa-sa" flutter: a second slow-ish oscillator pushes the rustle loudness up and down about twice a second
+  const flutter = actx.createOscillator(); flutter.frequency.value = 2.2; const flutterDepth = actx.createGain(); flutterDepth.gain.value = 0.05;
+  flutter.connect(flutterDepth).connect(rustleGain.gain); flutter.start();
   windGain = actx.createGain(); windGain.gain.value = 0;
   const lfo = actx.createOscillator(); lfo.frequency.value = 0.09;
   const lfoDepth = actx.createGain(); lfoDepth.gain.value = 0.35;
@@ -649,6 +654,22 @@ function audioInit() {
   src.connect(band).connect(windGain); src.connect(rustle).connect(rustleGain).connect(windGain);
   windGain.connect(master);
   src.start(); lfo.start();
+}
+function rustleLevel(v) { if (rustleGain) rustleGain.gain.setTargetAtTime(v, actx.currentTime, 0.4); }
+// a distant bird: two to five short rising whistles, quiet, softened, placed at a random side
+function chirp(vol = 0.04) {
+  if (!actx) return;
+  const pan = actx.createStereoPanner(); pan.pan.value = Math.random() * 1.6 - 0.8;
+  const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3600;
+  lp.connect(pan).connect(master);
+  const base = 2300 + Math.random() * 1500, n = 2 + Math.floor(Math.random() * 4);
+  let t = actx.currentTime + 0.02;
+  for (let i = 0; i < n; i++) {
+    const o = actx.createOscillator(), g = actx.createGain(), f0 = base * (0.9 + Math.random() * 0.25);
+    o.type = 'sine'; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f0 * (1.25 + Math.random() * 0.3), t + 0.09);
+    g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    o.connect(g).connect(lp); o.start(t); o.stop(t + 0.14); t += 0.14 + Math.random() * 0.08;
+  }
 }
 function windLevel(v, seconds = 4) { if (windGain) windGain.gain.setTargetAtTime(v, actx.currentTime, seconds / 3); }
 // singing bowl: a few sine waves at bowl-like frequencies that each fade out slowly; two copies slightly apart make the shimmer
@@ -727,30 +748,88 @@ const particles = new THREE.Points(pGeo, particleMat);
 particles.frustumCulled = false; particles.visible = false;
 scene.add(particles);
 
+/* ---------- bamboo: it grows taller as you breathe in, and its leaves sway as you breathe out ---------- */
+const USE_PARTICLES = false;   // the glowing breath particles from the first version; off now that the bamboo shows the breath
+const bamboo = new THREE.Group();
+bamboo.visible = false; scene.add(bamboo);
+const nodeTex = (() => {   // a stripe of darker joints every so often, repeated up the stalk
+  const c = document.createElement('canvas'); c.width = 16; c.height = 128;
+  const g = c.getContext('2d'); g.fillStyle = '#6fa56d'; g.fillRect(0, 0, 16, 128);
+  g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, 0, 5, 128);
+  g.fillStyle = '#3f6f45'; g.fillRect(0, 118, 16, 7);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapT = THREE.RepeatWrapping; return t;
+})();
+const stalkMat = new THREE.MeshBasicMaterial({ map: nodeTex, transparent: true, opacity: 0 });
+const leafMat = new THREE.MeshBasicMaterial({ color: 0x8fcf84, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+// one leaf is a narrow lens shape; a cluster is six of them fanned out and drooping, merged into one mesh
+const clusterGeo = (() => {
+  const shape = new THREE.Shape(); shape.moveTo(0, 0); shape.quadraticCurveTo(0.11, 0.3, 0, 0.75); shape.quadraticCurveTo(-0.11, 0.3, 0, 0);
+  const leaves = [];
+  for (let k = 0; k < 6; k++) {
+    const g = new THREE.ShapeGeometry(shape, 4);
+    g.rotateX(Math.PI / 2 + 0.55);               // lie along the ground, then droop downward
+    g.rotateY((k / 6) * Math.PI * 2 + (k % 2) * 0.3);
+    leaves.push(g);
+  }
+  return mergeGeometries(leaves);
+})();
+const stalks = [];
+const STALK_COUNT = 16, GROW_FROM = 0.45;   // the bamboo starts at 45 percent of its height and reaches 100 percent by the end of the breathing
+for (let i = 0; i < STALK_COUNT; i++) {
+  const az = (i / STALK_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.25, r = 2.6 + Math.random() * 3.4, H0 = 5 + Math.random() * 3;
+  const g = new THREE.Group(); g.position.set(Math.sin(az) * r, 0, Math.cos(az) * r);
+  const geo = new THREE.CylinderGeometry(0.04, 0.06, 1, 8, 1, true).translate(0, 0.5, 0);
+  const tex = nodeTex.clone(); tex.needsUpdate = true;
+  const mat = stalkMat.clone(); mat.map = tex;
+  const trunk = new THREE.Mesh(geo, mat); trunk.frustumCulled = false; g.add(trunk);
+  const clusters = [0.62, 0.8, 0.98].map((f, j) => { const c = new THREE.Mesh(clusterGeo, leafMat.clone()); c.userData = { f, seed: Math.random() * 10 + j }; c.rotation.y = Math.random() * 6; c.renderOrder = 12; c.frustumCulled = false; g.add(c); return c; });
+  g.userData = { H0, trunk, clusters, tex };
+  bamboo.add(g); stalks.push(g);
+}
+let growth = 0, swayAmt = 0;   // growth 0..1 over the whole session; swayAmt 0..1 follows the out-breath
+function updateBamboo(opacity) {
+  const hf = GROW_FROM + (1 - GROW_FROM) * growth;
+  for (const g of stalks) {
+    const { H0, trunk, clusters, tex } = g.userData, H = H0 * hf;
+    trunk.scale.set(0.7 + 0.3 * hf, H, 0.7 + 0.3 * hf); tex.repeat.set(1, H0 / 0.55); trunk.material.opacity = opacity;
+    for (const c of clusters) {
+      c.position.y = H * c.userData.f; c.material.opacity = 0.85 * opacity;
+      const wave = Math.sin(time * 2.4 + c.userData.seed * 3), wave2 = Math.cos(time * 1.9 + c.userData.seed * 2);
+      c.rotation.x = 0.04 * Math.sin(time * 0.8 + c.userData.seed) + swayAmt * 0.16 * wave;   // a slight movement always, a clear sway on the out-breath
+      c.rotation.z = swayAmt * 0.14 * wave2;
+    }
+  }
+}
+
 /* ---------- the Wood session: a list of things that happen at given seconds ---------- */
 const BREATH_IN = 4, BREATH_OUT = 6, BREATH_START = 14;   // seconds; breathing guide begins at 14 s
-const SESSION_END = 218;
+const SESSION_END = 238;
+// There is no text on screen during the meditation, only voice and sound.
 const TIMELINE = [
   { t: 0,   run: () => bowl(0.55) },
-  { t: 3,   voice: 'wood_intro',   text: 'Wood. The element of growth, like bamboo reaching toward the light. Let your body settle. There is nothing to do but breathe.' },
-  { t: 14,  voice: 'breath_start', text: 'Breathe in slowly, as the green light gathers toward you. And breathe out, as it drifts away.' },
-  { t: 40,  voice: 'scan_feet',    text: 'Now bring your attention to your feet. Notice the ground beneath them. Simply notice, without trying to change anything.' },
-  { t: 70,  voice: 'scan_legs',    text: 'Let your attention rise to your legs. Notice any weight, warmth, or stillness.' },
-  { t: 100, voice: 'scan_belly',   text: 'Move to your belly. Feel it rise as you breathe in, and settle as you breathe out.' },
-  { t: 130, voice: 'scan_chest',   text: 'Now your chest and shoulders. Let the shoulders be heavy, like bamboo leaves resting after a breeze.' },
-  { t: 160, voice: 'scan_face',    text: 'Finally, your face and jaw. Let them soften. Let the eyes be quiet.' },
-  { t: 190, voice: 'closing',      text: 'Take one more slow breath. When you are ready, let the garden fade, and return.' },
-  { t: 200, run: () => bowl(0.5) },
+  { t: 3,   voice: 'wood_intro' },
+  { t: 14,  voice: 'breath_start' },
+  { t: 30,  voice: 'spine' },     // "Feel your spine as upright as bamboo, full of resilience. With every breath, you draw life and vitality inward."
+  { t: 55,  voice: 'scan_feet' },
+  { t: 85,  voice: 'scan_legs' },
+  { t: 115, voice: 'scan_belly' },
+  { t: 145, voice: 'scan_chest' },
+  { t: 175, voice: 'scan_face' },
+  { t: 205, voice: 'closing' },
+  { t: 218, run: () => bowl(0.5) },
 ];
 let woodSession = null;
 function startWood() {
-  woodSession = { t: 0, next: 0, textUntil: 0 };
-  particles.position.copy(rig.position); particles.visible = true; particleMat.opacity = 0;
-  audioInit(); windLevel(0.05, 6);
+  woodSession = { t: 0, next: 0, nextBird: 20 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));   // ?skip=60 starts the meditation 60 s in (for testing)
+  if (skip > 0) { woodSession.t = skip; while (woodSession.next < TIMELINE.length && TIMELINE[woodSession.next].t < skip) woodSession.next++; woodSession.nextBird = skip + 5; }
+  growth = 0; swayAmt = 0; bamboo.position.copy(rig.position); bamboo.visible = true; updateBamboo(0);
+  particles.visible = USE_PARTICLES; particleMat.opacity = 0;
+  audioInit(); windLevel(0.05, 6); rustleLevel(0.1);
   playReveal(14);
 }
 function endWood() {
-  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; windLevel(0, 3);
+  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; windLevel(0, 3); rustleLevel(0);
   revealProgress.value = 0.02; reveal = null;
   setPhase('cards');
 }
@@ -766,25 +845,35 @@ function updateWood(dt) {
   while (s.next < TIMELINE.length && s.t >= TIMELINE[s.next].t) {
     const ev = TIMELINE[s.next++];
     if (ev.run) ev.run();
-    if (ev.voice) { say(ev.voice); setCaption(ev.text, capCue); s.textUntil = s.t + 14; }
+    if (ev.voice) say(ev.voice);
   }
-  if (s.textUntil && s.t > s.textUntil) { s.textUntil = 0; setCaption('', capCue); }
   // the guide fades in after BREATH_START and fades out before the end
   const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (SESSION_END - 24)) / 10));
-  const { b, inhale } = breathAt(s.t);
-  if (amp > 0.01) setCaption(capMain, inhale ? 'breathe in' : 'breathe out'); else if (capCue) setCaption(capMain, '');
-  particleMat.opacity = 0.9 * amp;
-  const tc = (((s.t - BREATH_START) % (BREATH_IN + BREATH_OUT)) + BREATH_IN + BREATH_OUT) % (BREATH_IN + BREATH_OUT);
-  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
-  particles.position.copy(rig.position);   // the particles go where you go
-  const pull = 0.82 * b * amp;                      // 0 = particles at home, 1 = at your head
-  for (let i = 0; i < P_N; i++) {
-    const sway = Math.sin(time * 0.7 + pSeed[i] * 40) * 0.18 * (1 - b * amp);
-    pPos[i * 3]     = lerp(pHome[i * 3], 0, pull) + sway;
-    pPos[i * 3 + 1] = lerp(pHome[i * 3 + 1], 1.5, pull) + Math.cos(time * 0.5 + pSeed[i] * 30) * 0.1;
-    pPos[i * 3 + 2] = lerp(pHome[i * 3 + 2], 0, pull) + sway;
+  const { inhale } = breathAt(s.t);
+  const cycle = BREATH_IN + BREATH_OUT;
+  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle, cycleIndex = Math.max(0, Math.floor((s.t - BREATH_START) / cycle));
+  const cycles = Math.floor((SESSION_END - 33 - BREATH_START) / cycle);   // number of breaths in the guided part
+  if (amp > 0.02) {
+    ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT;
+    // growth steps up during each in-breath and holds during the out-breath
+    growth = clamp((cycleIndex + (inhale ? smooth01(tc / BREATH_IN) : 1)) / cycles);
+    // the leaves sway during the out-breath: a gentle swell that rises and falls
+    swayAmt = inhale ? swayAmt * 0.9 : Math.sin(Math.PI * clamp((tc - BREATH_IN) / BREATH_OUT));
+    rustleLevel(inhale ? 0.08 : 0.08 + 0.5 * swayAmt);
+  } else ringState.mode = 'idle';
+  // the bamboo fades in with the reveal and out at the end
+  updateBamboo(smooth01(s.t / 8) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8)));
+  if (s.t > s.nextBird) { chirp(); if (Math.random() < 0.5) setTimeout(chirp, 700 + Math.random() * 900); s.nextBird = s.t + 7 + Math.random() * 9; }
+  if (USE_PARTICLES) {
+    const { b } = breathAt(s.t);
+    particleMat.opacity = 0.9 * amp; particles.position.copy(rig.position);
+    const pull = 0.82 * b * amp;
+    for (let i = 0; i < P_N; i++) {
+      const sway = Math.sin(time * 0.7 + pSeed[i] * 40) * 0.18 * (1 - b * amp);
+      pPos[i * 3] = lerp(pHome[i * 3], 0, pull) + sway; pPos[i * 3 + 1] = lerp(pHome[i * 3 + 1], 1.5, pull) + Math.cos(time * 0.5 + pSeed[i] * 30) * 0.1; pPos[i * 3 + 2] = lerp(pHome[i * 3 + 2], 0, pull) + sway;
+    }
+    pGeo.attributes.position.needsUpdate = true;
   }
-  pGeo.attributes.position.needsUpdate = true;
   if (s.t >= SESSION_END) endWood();
 }
 
@@ -898,7 +987,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 
 const phCards = $('phCards'), phWood = $('phWood'), phGarden = $('phGarden');
 function setPhase(p) {
-  if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; stopVoices(); setCaption('', ''); particles.visible = false; windLevel(0, 2); revealProgress.value = 0.02; reveal = null; }
+  if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
   phase = p;
   applySceneScale();
   reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
@@ -957,7 +1046,7 @@ setPhase('cards');
 // ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
 { const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); }   // ?pitch=-1.1 looks down
 
-let last = performance.now(), time = 0;
+let last = performance.now();
 const _cam = new THREE.Vector3();
 renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
