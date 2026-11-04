@@ -746,7 +746,7 @@ function audioInit() {
   flutter.connect(flutterDepth).connect(rustleGain.gain); flutter.start();
   windGain = actx.createGain(); windGain.gain.value = 0;
   const lfo = actx.createOscillator(); lfo.frequency.value = 0.09;
-  const lfoDepth = actx.createGain(); lfoDepth.gain.value = 0.35;
+  const lfoDepth = actx.createGain(); lfoDepth.gain.value = 0.25;
   lfo.connect(lfoDepth).connect(windGain.gain);   // the swell is added on top of the base level
   src.connect(band).connect(windGain); src.connect(rustle).connect(rustleGain).connect(windGain);
   windGain.connect(master);
