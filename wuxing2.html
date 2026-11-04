@@ -1110,8 +1110,10 @@ const warmGlowTex = (() => {
 })();
 
 // The lantern hangs straight ahead of where you start, under the pavilion eave. The scan is shown at SCENE_SCALE, so distance and height are scaled with it.
-const LANTERN_DIST = Math.hypot(FIRE_TARGET.x - FIRE_START.x, FIRE_TARGET.z - FIRE_START.z) * SCENE_SCALE;
-const lantern = new THREE.Group(); lantern.position.set(0, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE, -LANTERN_DIST); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
+// The lantern's place in your frame. You now face the middle of the lake (FIRE_YAW), not the pavilion, so the world offset to the pavilion is turned into that frame.
+const _ldx = FIRE_TARGET.x - FIRE_START.x, _ldz = FIRE_TARGET.z - FIRE_START.z;
+const LANTERN_LOCAL = new THREE.Vector2((_ldx * Math.cos(FIRE_YAW) - _ldz * Math.sin(FIRE_YAW)) * SCENE_SCALE, (_ldx * Math.sin(FIRE_YAW) + _ldz * Math.cos(FIRE_YAW)) * SCENE_SCALE);
+const lantern = new THREE.Group(); lantern.position.set(LANTERN_LOCAL.x, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE, LANTERN_LOCAL.y); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
 const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
 const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
 const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
@@ -1270,7 +1272,8 @@ function updateFire(dt) {
   while (mapleAcc >= 1) {
     mapleAcc -= 1;
     const m = mapleLeaves.find((l) => !l.visible); if (!m) break;
-    m.position.set(-3.5 + Math.random() * 7, 2.5 + Math.random() * 3, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true;   m.userData.age = 0;   // all along the bridge and out past the lantern
+    { const t = -0.2 + Math.random() * 1.5; m.position.set(LANTERN_LOCAL.x * t + (Math.random() - 0.5) * 7, 2.5 + Math.random() * 3, LANTERN_LOCAL.y * t + (Math.random() - 0.5) * 7); }
+    m.visible = true; m.userData.age = 0;   // all along the bridge and out past the lantern, toward the pavilion
     m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);   // each leaf starts at its own angle
   }
   for (const m of mapleLeaves) {
