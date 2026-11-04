@@ -423,7 +423,7 @@ scene.add(marker);
 { const q = new URLSearchParams(location.search).get('start'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) { VR_START.set(x, y, z); VR_YAW = Math.atan2(-(GARDEN.x - x), -(GARDEN.z - z)); } } }
 // Scene scale: the scan is shown at SCENE_SCALE times its recorded size, shrunk around the standing point so your feet stay on the ground.
 // (?scale=0.6 in the link, or the slider in the garden preview.)
-let SCENE_SCALE = 1.2;   // 1 = the scan at its recorded size
+let SCENE_SCALE = 1.1;   // 1 = the scan at its recorded size
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
