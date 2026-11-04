@@ -1149,13 +1149,45 @@ function updateFire(dt) {
 // In VR a pinch of thumb and forefinger counts as a "select", exactly like pressing a controller trigger,
 // and the hand has a pointing ray, so one piece of code handles both. Hand tracking must be switched on in the Quest settings.
 let phaseChangedAt = -10;   // time of the last switch between places
+// Palms together (hands in prayer) for 3 seconds leaves a scene. Read from the hand joints: both wrists, palms and middle fingertips close together,
+// the fingers stretched out and pointing up. A ring of small dots fills up while you hold it.
+const PRAYER_SECONDS = 3;
+let prayerHeld = 0, prayerLost = 0;
+const PV = Array.from({ length: 6 }, () => new THREE.Vector3()), _mid = new THREE.Vector3(), _cr = new THREE.Vector3(), _cu = new THREE.Vector3();
+const prayerPos = new Float32Array(24 * 3), prayerGeo = new THREE.BufferGeometry();
+prayerGeo.setAttribute('position', new THREE.BufferAttribute(prayerPos, 3)); prayerGeo.setDrawRange(0, 0);
+const prayerDots = new THREE.Points(prayerGeo, new THREE.PointsMaterial({ map: glow, size: 0.03, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false }));
+prayerDots.frustumCulled = false; prayerDots.renderOrder = 40; scene.add(prayerDots);
+function handJoint(i, name) { const h = renderer.xr.getHand(i), j = h.joints && h.joints[name]; return j && j.visible ? j : null; }
+function palmsTogether() {
+  const names = ['wrist', 'middle-finger-metacarpal', 'middle-finger-tip'], J = [];
+  for (const i of [0, 1]) for (const n of names) { const j = handJoint(i, n); if (!j) return false; J.push(j); }
+  J.forEach((j, k) => j.getWorldPosition(PV[k]));
+  const [wL, pL, tL, wR, pR, tR] = PV;
+  const near = wL.distanceTo(wR) < 0.16 && pL.distanceTo(pR) < 0.10 && tL.distanceTo(tR) < 0.10;
+  const stretched = wL.distanceTo(tL) > 0.12 && wR.distanceTo(tR) > 0.12;       // fingers out, not a fist
+  const up = tL.y - wL.y > 0.05 && tR.y - wR.y > 0.05;                            // fingers pointing up
+  _mid.copy(tL).add(tR).multiplyScalar(0.5);
+  return near && stretched && up;
+}
+function updatePrayer(dt) {
+  if (!(phase === 'wood' || phase === 'fire') || !renderer.xr.isPresenting) { prayerHeld = 0; prayerGeo.setDrawRange(0, 0); return; }
+  if (palmsTogether()) { prayerHeld += dt; prayerLost = 0; }
+  else { prayerLost += dt; if (prayerLost > 0.35) prayerHeld = 0; }
+  const n = Math.floor(24 * Math.min(1, prayerHeld / PRAYER_SECONDS));
+  if (n > 0 && prayerLost <= 0.35) {
+    camera.getWorldQuaternion(_q); _cr.set(1, 0, 0).applyQuaternion(_q); _cu.set(0, 1, 0).applyQuaternion(_q);
+    for (let k = 0; k < 24; k++) { const a = (k / 24) * Math.PI * 2 - Math.PI / 2; prayerPos[k * 3] = _mid.x + (Math.cos(a) * _cr.x + Math.sin(a) * _cu.x) * 0.07; prayerPos[k * 3 + 1] = _mid.y + 0.1 + (Math.cos(a) * _cr.y + Math.sin(a) * _cu.y) * 0.07; prayerPos[k * 3 + 2] = _mid.z + (Math.cos(a) * _cr.z + Math.sin(a) * _cu.z) * 0.07; }
+    prayerGeo.attributes.position.needsUpdate = true; prayerGeo.setDrawRange(0, n);
+  } else prayerGeo.setDrawRange(0, 0);
+  if (prayerHeld >= PRAYER_SECONDS) { prayerHeld = 0; prayerGeo.setDrawRange(0, 0); exitSession(); }
+}
 function exitSession() { if (phase === 'wood') endWood(); else if (phase === 'fire') endFire(); }
 function checkExit() {
   if (!(phase === 'wood' || phase === 'fire') || !renderer.xr.isPresenting) return;
   const c = [0, 1].map((i) => renderer.xr.getController(i).userData);
-  const both = c[0].heldAt != null && c[1].heldAt != null && time - Math.max(c[0].heldAt, c[1].heldAt) > 1.2;
   const grip = c.some((u) => u.squeezeAt != null && time - u.squeezeAt > 1.0);
-  if (both || grip) { c.forEach((u) => { u.heldAt = null; u.squeezeAt = null; }); exitSession(); }
+  if (grip) { c.forEach((u) => { u.heldAt = null; u.squeezeAt = null; }); exitSession(); }
 }
 let hover = null, sel = null, lastHover = null, capHold = 0;   // capHold: the caption is busy (welcome, notice) until this time
 const FLOAT = 0.07;   // metres the cards rise and fall; raise it for a stronger float
@@ -1219,7 +1251,7 @@ for (const i of [0, 1]) {
   const ctrl = renderer.xr.getController(i);
   ctrl.addEventListener('connected', () => { ctrl.userData.connected = true; });
   ctrl.addEventListener('disconnected', () => { ctrl.userData.connected = false; });
-  // holding the pinch (or trigger) with both hands for 1.2 s, or one grip button for 1 s, leaves a scene
+  // holding one controller's grip button for 1 s leaves a scene (with hand tracking: palms together, see updatePrayer)
   ctrl.addEventListener('selectstart', () => { ctrl.userData.heldAt = time; });
   ctrl.addEventListener('selectend', () => { ctrl.userData.heldAt = null; });
   ctrl.addEventListener('squeezestart', () => { ctrl.userData.squeezeAt = time; });
@@ -1246,7 +1278,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 let welcomed = false;
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  capHold = time + 14; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, hold a pinch with both hands.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000); }, 3000);
+  capHold = time + 14; setTimeout(() => { say('welcome'); setCaption('Welcome. Five elements surround you. Choose a card with a pinch. To leave a scene at any time, press your palms together for three seconds.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 11000); }, 3000);
 }
 
 /* =====================================================================
@@ -1354,7 +1386,7 @@ renderer.setAnimationLoop((now) => {
     if (k >= 1) reveal = null;
   }
   updateNearMist(dt);
-  checkExit();
+  checkExit(); updatePrayer(dt);
   if (needAlign > 0 && renderer.xr.isPresenting && phase === 'cards' && --needAlign === 0) faceWorldYaw(0);
   if (phase === 'cards') updateCards(dt);
   else if (phase === 'wood') { updateWood(dt); walk(dt); }
