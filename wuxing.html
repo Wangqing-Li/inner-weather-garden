@@ -1032,7 +1032,8 @@ const warmGlowTex = (() => {
 })();
 
 // The lantern hangs straight ahead of where you start, under the pavilion eave. The scan is shown at SCENE_SCALE, so distance and height are scaled with it.
-const lantern = new THREE.Group(); lantern.position.set(0, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE, -Math.hypot(FIRE_TARGET.x - FIRE_START.x, FIRE_TARGET.z - FIRE_START.z) * SCENE_SCALE); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
+const LANTERN_DIST = Math.hypot(FIRE_TARGET.x - FIRE_START.x, FIRE_TARGET.z - FIRE_START.z) * SCENE_SCALE;
+const lantern = new THREE.Group(); lantern.position.set(0, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE, -LANTERN_DIST); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
 const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
 const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
 const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
@@ -1092,7 +1093,7 @@ const mapleTextures = [
 ];
 const mapleGeo = new THREE.PlaneGeometry(1, 1);
 const mapleLeaves = [];
-for (let i = 0; i < 50; i++) {
+for (let i = 0; i < 90; i++) {
   const m = new THREE.Mesh(mapleGeo, new THREE.MeshBasicMaterial({ map: mapleTextures[i % 3], transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
   m.visible = false; m.renderOrder = 13; m.frustumCulled = false;
   m.userData = { ph: Math.random() * 6, vy: 0.18 + Math.random() * 0.2, spin: (Math.random() - 0.5) * 1.4, size: 0.16 + Math.random() * 0.3 };   // size 16 to 46 cm
@@ -1141,6 +1142,10 @@ function startFire() {
   faceWorldYaw(FIRE_YAW);
   fireGroup.position.copy(rig.position); fireGroup.rotation.y = rig.rotation.y; fireGroup.visible = true;
   fireOut = 0; fireVis = 0; mapleAcc = 0; emberAcc = 0; mistBoost = 1;
+  mapleLeaves.slice(0, 45).forEach((m) => {   // some leaves already in the air around the bridge and the lantern when the scene begins
+    m.position.set(-3.5 + Math.random() * 7, -0.2 + Math.random() * 4.5, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true; m.userData.age = 1;
+    m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);
+  });
   audioInit(); fireAudioStart(); windLevel(0.03, 6); rustleLevel(0);
   playReveal(14, FIRE_START);
 }
@@ -1188,11 +1193,11 @@ function updateFire(dt) {
   }
   emberGeo.attributes.position.needsUpdate = true; emberGeo.attributes.color.needsUpdate = true; emberMat.opacity = fireVis;
   // red maple leaves let go and drift down during the out-breath
-  mapleAcc += dt * 4 * fireOut;
+  mapleAcc += dt * (2 + 5 * fireOut);   // a few leaves always, many more on the out-breath
   while (mapleAcc >= 1) {
     mapleAcc -= 1;
     const m = mapleLeaves.find((l) => !l.visible); if (!m) break;
-    m.position.set(-4 + Math.random() * 10, 4 + Math.random() * 3, -1.5 - Math.random() * 8); m.visible = true; m.userData.age = 0;
+    m.position.set(-3.5 + Math.random() * 7, 2.5 + Math.random() * 3, 1 - Math.random() * (LANTERN_DIST + 2)); m.visible = true;   // all along the bridge and out past the lantern m.userData.age = 0;
     m.scale.setScalar(m.userData.size); m.rotation.set(Math.random() * 3, Math.random() * 3, Math.random() * 6);   // each leaf starts at its own angle
   }
   for (const m of mapleLeaves) {
@@ -1200,8 +1205,8 @@ function updateFire(dt) {
     const u = m.userData; u.age += dt;
     m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.1 + u.ph) * 0.35 * dt; m.position.z += Math.cos(time * 0.8 + u.ph) * 0.2 * dt;
     m.rotation.z += u.spin * dt; m.rotation.x = 0.6 + Math.sin(time * 1.1 + u.ph) * 0.9; m.rotation.y = Math.sin(time * 0.7 + u.ph * 2) * 0.7;
-    m.material.opacity = 0.92 * fireVis * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
-    if (m.position.y < 0.05) m.visible = false;
+    m.material.opacity = 0.92 * fireVis * smooth01(u.age / 0.6) * smooth01((m.position.y + 0.4) / 0.8);   // they fade near the water and ground below the bridge
+    if (m.position.y < -0.4) m.visible = false;
   }
   // sounds
   if (Math.random() < dt * 5) crackle();
