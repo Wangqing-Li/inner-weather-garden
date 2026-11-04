@@ -1011,15 +1011,15 @@ function updateFalling(dt, opacity) {
 // The common structure of every element (from the script doc): arrival, the breath introduction, a guide, then simple cues, with 3 seconds between lines.
 // Breathing is 4 s in, 2 s hold, 6 s out. Everything that moves (leaves, lights, rain, birds, chimes) appears when "Bring your awareness to your breath" begins.
 const BREATH_IN = 4, BREATH_HOLD = 2, BREATH_OUT = 6, BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT;
-const V2_DUR = { arrival: 12.7, breath_intro: 4.7 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
-const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // "Bring your awareness to your breath": the leaves, lights, rain, birds and the ground ring begin here
-const V2_GUIDE_AT = V2_BREATH_AT + V2_DUR.breath_intro + 3;    // the start of the first guided breath; every breath cycle is counted from here
+const V2_DUR = { arrival: 12.7 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
+const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // the first guided breath: the leaves, lights, rain, birds and the ground ring begin here
+const V2_GUIDE_AT = V2_BREATH_AT;    // the start of the first guided breath; every breath cycle is counted from here
 let breathStart = V2_GUIDE_AT;
 const V2_CUE_AT = V2_GUIDE_AT + 2 * BREATH_CYCLE, V2_CUES = 6;       // after the guide, "Inhale... hold... exhale..." for 6 cycles
 const V2_END = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3 + 21;
 function v2Timeline(element) {
   const O = V2_GUIDE_AT;
-  const tl = [{ t: 0, run: () => bowl(0.5) }, { t: 3, voice: 'arrival' }, { t: V2_BREATH_AT, voice: 'breath_intro' },
+  const tl = [{ t: 0, run: () => bowl(0.5) }, { t: 3, voice: 'arrival' },
     { t: O, voice: 'g1_' + element },                  // "Inhale deeply, watching ..."  (with the in-breath)
     { t: O + BREATH_IN, voice: 'g_hold' },                   // "Hold it..."
     { t: O + BREATH_IN + BREATH_HOLD, voice: 'g_exhale' },           // "And exhale completely, releasing any tension..."
