@@ -1011,19 +1011,19 @@ function updateFalling(dt, opacity) {
 // The common structure of every element (from the script doc): arrival, the breath introduction, a guide, then simple cues, with 3 seconds between lines.
 // Breathing is 4 s in, 2 s hold, 6 s out. Everything that moves (leaves, lights, rain, birds, chimes) appears when "Bring your awareness to your breath" begins.
 const BREATH_IN = 4, BREATH_HOLD = 2, BREATH_OUT = 6, BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT;
-const V2_DUR = { arrival: 16.9, breath_intro: 6.3 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
+const V2_DUR = { arrival: 12.7, breath_intro: 4.7 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
 const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // "Bring your awareness to your breath": the leaves, lights, rain, birds and the ground ring begin here
-const V2_GUIDE_AT = V2_BREATH_AT + V2_DUR.breath_intro + 3 + 0.8;    // the start of the first guided breath; every breath cycle is counted from here
+const V2_GUIDE_AT = V2_BREATH_AT + V2_DUR.breath_intro + 3;    // the start of the first guided breath; every breath cycle is counted from here
 let breathStart = V2_GUIDE_AT;
 const V2_CUE_AT = V2_GUIDE_AT + 2 * BREATH_CYCLE, V2_CUES = 6;       // after the guide, "Inhale... hold... exhale..." for 6 cycles
 const V2_END = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3 + 21;
 function v2Timeline(element) {
   const O = V2_GUIDE_AT;
   const tl = [{ t: 0, run: () => bowl(0.5) }, { t: 3, voice: 'arrival' }, { t: V2_BREATH_AT, voice: 'breath_intro' },
-    { t: O - 0.8, voice: 'g1_' + element },                  // "Inhale deeply, watching ..."  (with the in-breath)
+    { t: O, voice: 'g1_' + element },                  // "Inhale deeply, watching ..."  (with the in-breath)
     { t: O + BREATH_IN, voice: 'g_hold' },                   // "Hold it..."
-    { t: O + BREATH_IN + 1.6, voice: 'g_exhale' },           // "And exhale completely, releasing any tension..."
-    { t: O + 15.7, voice: 'g4_' + element }];                // "With every breath, you are drawing the energy of ... into your core."
+    { t: O + BREATH_IN + BREATH_HOLD, voice: 'g_exhale' },           // "And exhale completely, releasing any tension..."
+    { t: O + 14.4, voice: 'g4_' + element }];                // "With every breath, you are drawing the energy of ... into your core."
   for (let c = 0; c < V2_CUES; c++) { const t0 = V2_CUE_AT + c * BREATH_CYCLE; tl.push({ t: t0, voice: 'cue_in' }, { t: t0 + BREATH_IN, voice: 'cue_hold' }, { t: t0 + BREATH_IN + BREATH_HOLD, voice: 'cue_out' }); }
   tl.push({ t: V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3, run: () => bowl(0.45) });
   return tl;
@@ -1561,12 +1561,12 @@ let welcomed = false;
 let welcomeTimers = [];
 function welcome() {
   welcomed = true; audioInit(); bowl(0.45);
-  capHold = time + 28;
-  // the voice is 21.6 s; the first two sentences are about 43% of it, so the gesture sentences appear at about 9.4 s
+  capHold = time + 24;
+  // the voice is 16.5 s; the first two sentences are about 43% of it, so the gesture sentences appear at about 7.1 s
   welcomeTimers.push(setTimeout(() => {
     say('welcome_v2'); setCaption('Welcome to the Wuxing Meridian. Look around, trust your intuition, and select the card that calls to you today.', '');
-    welcomeTimers.push(setTimeout(() => setCaption('To choose a card, pinch it with your thumb and forefinger. To leave a scene at any time, press your palms together for three seconds.', ''), 9400));
-    welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 22500));
+    welcomeTimers.push(setTimeout(() => setCaption('To choose a card, pinch it with your thumb and forefinger. To leave a scene at any time, press your palms together for three seconds.', ''), 7100));
+    welcomeTimers.push(setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 17500));
   }, 3000));
 }
 // choosing a card ends the welcome: the text is already gone, the voice fades over 1.5 s and does not carry into the session
