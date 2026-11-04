@@ -493,12 +493,14 @@ for (let i = 0; i < 18; i++) {
   s.userData = { ang: Math.random() * Math.PI * 2, r: lerp(1.3, 3.2, Math.random()), h: lerp(0.1, 2.2, Math.random()), speed: (Math.random() - 0.5) * 0.06, seed: Math.random() * 10, base: lerp(0.35, 0.8, Math.random()) };
   nearMist.add(s);
 }
+let mistBoost = 0;       // 1 at the moment you step into the garden, easing to 0, so the mist clears slowly
 let nearMistLevel = 1;   // eased toward 1 on the cards, 0.35 in the meditation, 0 in the desktop overview
 function updateNearMist(dt) {
-  const goal = phase === 'cards' ? 1 : phase === 'wood' ? 0.35 : 0;
+  mistBoost = Math.max(0, mistBoost - dt / 18);
+  const goal = phase === 'cards' ? 1 : phase === 'wood' ? 0.35 + 1.1 * mistBoost : 0;
   nearMistLevel += (goal - nearMistLevel) * (1 - Math.exp(-dt * 1.5));
   for (const s of nearMist.children) {
-    const u = s.userData; u.ang += u.speed * dt;
+    const u = s.userData; u.ang += u.speed * dt * (1 + 3 * mistBoost);
     s.position.set(rig.position.x + Math.cos(u.ang) * u.r, rig.position.y + u.h + Math.sin(time * 0.15 + u.seed) * 0.12, rig.position.z + Math.sin(u.ang) * u.r);
     s.material.opacity = u.base * 0.45 * nearMistLevel;
   }
@@ -592,6 +594,15 @@ function updateRipples(dt, on) {
   standRing.material.opacity = op;
 }
 const _bf = new THREE.Vector3(); let bodyYaw = 0;
+// Turn the rig so that your head ends up facing world direction `target` (a yaw angle; 0 = toward -z), whichever way you happened to be looking.
+function faceWorldYaw(target) {
+  if (!renderer.xr.isPresenting) return;
+  camera.getWorldDirection(_bf);
+  if (Math.hypot(_bf.x, _bf.z) < 0.2) return;
+  rig.rotation.y += target - Math.atan2(-_bf.x, -_bf.z);
+  rig.updateMatrixWorld(true);
+}
+let needAlign = 0;
 const handMeshes = [];   // [{ obj, parent }]
 function handPiece(side) { const m = new THREE.Mesh(bodyParts[side], ghostMat); m.frustumCulled = false; m.renderOrder = 15; m.scale.setScalar(bodyScale.v); handMeshes.push(m); return m; }
 for (const i of [0, 1]) {
@@ -748,56 +759,103 @@ const particles = new THREE.Points(pGeo, particleMat);
 particles.frustumCulled = false; particles.visible = false;
 scene.add(particles);
 
-/* ---------- bamboo: it grows taller as you breathe in, and its leaves sway as you breathe out ---------- */
+/* ---------- bamboo: faint, painted, half there; the leaves sway when you breathe out and some fall ---------- */
 const USE_PARTICLES = false;   // the glowing breath particles from the first version; off now that the bamboo shows the breath
 const bamboo = new THREE.Group();
 bamboo.visible = false; scene.add(bamboo);
-const nodeTex = (() => {   // a stripe of darker joints every so often, repeated up the stalk
-  const c = document.createElement('canvas'); c.width = 16; c.height = 128;
-  const g = c.getContext('2d'); g.fillStyle = '#6fa56d'; g.fillRect(0, 0, 16, 128);
-  g.fillStyle = 'rgba(255,255,255,0.12)'; g.fillRect(0, 0, 5, 128);
-  g.fillStyle = '#3f6f45'; g.fillRect(0, 118, 16, 7);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapT = THREE.RepeatWrapping; return t;
+
+// A stalk painted like a watercolour: lighter grey-green on the lit side, darker on the other, dry-brush streaks, and a dark joint with a pale gap above it.
+const stalkTex = (() => {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256;
+  const g = c.getContext('2d');
+  const lr = g.createLinearGradient(0, 0, 128, 0); lr.addColorStop(0, '#a9b898'); lr.addColorStop(0.3, '#6f8c4e'); lr.addColorStop(0.75, '#3f5e35'); lr.addColorStop(1, '#2c4429');
+  g.fillStyle = lr; g.fillRect(0, 0, 128, 256);
+  for (let i = 0; i < 260; i++) { g.fillStyle = Math.random() < 0.5 ? 'rgba(235,240,215,0.10)' : 'rgba(20,35,20,0.12)'; g.fillRect(Math.random() * 128, Math.random() * 256, 1 + Math.random() * 2, 14 + Math.random() * 70); }
+  g.fillStyle = '#26371f'; g.fillRect(0, 214, 128, 30);      // the dark joint
+  g.fillStyle = 'rgba(40,60,30,0.6)'; g.fillRect(0, 244, 128, 4);
+  g.fillStyle = '#ece7d4'; g.fillRect(0, 248, 128, 8);       // pale gap
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; return t;
 })();
-const stalkMat = new THREE.MeshBasicMaterial({ map: nodeTex, transparent: true, opacity: 0 });
-const leafMat = new THREE.MeshBasicMaterial({ color: 0x8fcf84, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
-// one leaf is a narrow lens shape; a cluster is six of them fanned out and drooping, merged into one mesh
-const clusterGeo = (() => {
-  const shape = new THREE.Shape(); shape.moveTo(0, 0); shape.quadraticCurveTo(0.11, 0.3, 0, 0.75); shape.quadraticCurveTo(-0.11, 0.3, 0, 0);
-  const leaves = [];
-  for (let k = 0; k < 6; k++) {
-    const g = new THREE.ShapeGeometry(shape, 4);
-    g.rotateX(Math.PI / 2 + 0.55);               // lie along the ground, then droop downward
-    g.rotateY((k / 6) * Math.PI * 2 + (k % 2) * 0.3);
-    leaves.push(g);
+// A bunch of leaves painted as tapered brush strokes, two colour variants (green, olive); used on crossed planes.
+function leafBunchTexture(light, dark) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  for (let k = 0; k < 9; k++) {
+    const ang = (-95 + k * 24 + (Math.random() - 0.5) * 14) * Math.PI / 180, len = 85 + Math.random() * 50, w = 12 + Math.random() * 9;
+    g.save(); g.translate(128, 200); g.rotate(ang + Math.PI * 0.12 * (k % 2 ? 1 : -1) * 0.3);
+    const grad = g.createLinearGradient(0, 0, 0, -len); grad.addColorStop(0, dark); grad.addColorStop(1, light);
+    g.fillStyle = grad; g.globalAlpha = 0.85;
+    g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(w, -len * 0.45, 0, -len); g.quadraticCurveTo(-w, -len * 0.45, 0, 0); g.fill();
+    g.globalAlpha = 0.35; g.strokeStyle = dark; g.lineWidth = 1.3; g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -len * 0.9); g.stroke();
+    g.restore();
   }
-  return mergeGeometries(leaves);
-})();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const leafTexA = leafBunchTexture('#a9bd62', '#3f6b34'), leafTexB = leafBunchTexture('#cdbd56', '#6d7f2c');
+// two planes crossed at right angles, so the bunch looks full from any side; origin at the base of the leaves
+const bunchGeo = mergeGeometries([new THREE.PlaneGeometry(1.9, 1.9).translate(0, 0.534, 0), new THREE.PlaneGeometry(1.9, 1.9).translate(0, 0.534, 0).rotateY(Math.PI / 2)]);
+
+// Where the bamboo grows, in metres, with you at the origin looking along -z toward the pavilion. Two or three tall stalks gathered on each side,
+// one or two small ones standing alone; the strip straight ahead is left empty so the view to the pavilion stays clear.
+const GROVE = [
+  [-4.3, -1.6, 7.5], [-3.7, -2.5, 6.4], [-4.9, -2.9, 8.0],        // left group
+  [4.0, -3.0, 7.2], [4.8, -2.2, 8.2], [3.5, -3.9, 6.0],           // right group
+  [-3.4, -5.4, 3.4], [3.2, 1.6, 3.8],                              // two small ones standing alone
+];
 const stalks = [];
-const STALK_COUNT = 16, GROW_FROM = 0.45;   // the bamboo starts at 45 percent of its height and reaches 100 percent by the end of the breathing
-for (let i = 0; i < STALK_COUNT; i++) {
-  const az = (i / STALK_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.25, r = 2.6 + Math.random() * 3.4, H0 = 5 + Math.random() * 3;
-  const g = new THREE.Group(); g.position.set(Math.sin(az) * r, 0, Math.cos(az) * r);
-  const geo = new THREE.CylinderGeometry(0.04, 0.06, 1, 8, 1, true).translate(0, 0.5, 0);
-  const tex = nodeTex.clone(); tex.needsUpdate = true;
-  const mat = stalkMat.clone(); mat.map = tex;
-  const trunk = new THREE.Mesh(geo, mat); trunk.frustumCulled = false; g.add(trunk);
-  const clusters = [0.62, 0.8, 0.98].map((f, j) => { const c = new THREE.Mesh(clusterGeo, leafMat.clone()); c.userData = { f, seed: Math.random() * 10 + j }; c.rotation.y = Math.random() * 6; c.renderOrder = 12; c.frustumCulled = false; g.add(c); return c; });
-  g.userData = { H0, trunk, clusters, tex };
+for (const [x, z, H0] of GROVE) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const mat = new THREE.MeshBasicMaterial({ map: stalkTex.clone(), transparent: true, opacity: 0, depthWrite: false }); mat.map.needsUpdate = true;
+  mat.map.repeat.set(1, H0 / 0.7);
+  const rad = H0 > 5 ? 0.1 : 0.06;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(rad * 0.75, rad, H0, 10, 1, true).translate(0, H0 / 2, 0), mat); trunk.frustumCulled = false; trunk.renderOrder = 11; g.add(trunk);
+  const leafMat = new THREE.MeshBasicMaterial({ map: Math.random() < 0.55 ? leafTexA : leafTexB, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false });
+  const fr = H0 > 5 ? [0.5, 0.62, 0.74, 0.86, 0.98] : [0.7, 0.88, 1.0];
+  const clusters = fr.map((f, j) => {
+    const c = new THREE.Mesh(bunchGeo, leafMat); c.position.y = H0 * f; c.rotation.y = Math.random() * 6;
+    c.scale.setScalar(H0 > 5 ? 1 : 0.75); c.userData = { seed: Math.random() * 10 + j }; c.renderOrder = 12; c.frustumCulled = false; g.add(c); return c;
+  });
+  g.userData = { H0, trunk, leafMat, clusters, seed: Math.random() * 10 };
   bamboo.add(g); stalks.push(g);
 }
-let growth = 0, swayAmt = 0;   // growth 0..1 over the whole session; swayAmt 0..1 follows the out-breath
+let swayAmt = 0;   // 0..1, follows the out-breath
 function updateBamboo(opacity) {
-  const hf = GROW_FROM + (1 - GROW_FROM) * growth;
   for (const g of stalks) {
-    const { H0, trunk, clusters, tex } = g.userData, H = H0 * hf;
-    trunk.scale.set(0.7 + 0.3 * hf, H, 0.7 + 0.3 * hf); tex.repeat.set(1, H0 / 0.55); trunk.material.opacity = opacity;
+    const { trunk, leafMat, clusters, seed } = g.userData;
+    const flick = 0.65 + 0.35 * Math.sin(time * 0.35 + seed);   // each stalk slowly appears and half fades, "now you see it, now you don't"
+    trunk.material.opacity = 0.5 * flick * opacity; leafMat.opacity = 0.7 * flick * opacity;
     for (const c of clusters) {
-      c.position.y = H * c.userData.f; c.material.opacity = 0.85 * opacity;
       const wave = Math.sin(time * 2.4 + c.userData.seed * 3), wave2 = Math.cos(time * 1.9 + c.userData.seed * 2);
-      c.rotation.x = 0.04 * Math.sin(time * 0.8 + c.userData.seed) + swayAmt * 0.16 * wave;   // a slight movement always, a clear sway on the out-breath
-      c.rotation.z = swayAmt * 0.14 * wave2;
+      c.rotation.x = 0.03 * Math.sin(time * 0.8 + c.userData.seed) + swayAmt * 0.2 * wave;   // nearly still on the in-breath, a clear sway on the out-breath
+      c.rotation.z = swayAmt * 0.18 * wave2;
     }
+  }
+}
+// Falling leaves: single leaves that let go of the bamboo during the out-breath and drift down.
+const fallGeo = (() => { const sh = new THREE.Shape(); sh.moveTo(0, 0); sh.quadraticCurveTo(0.06, 0.15, 0, 0.36); sh.quadraticCurveTo(-0.06, 0.15, 0, 0); return new THREE.ShapeGeometry(sh, 3); })();
+const fallLeaves = [];
+for (let i = 0; i < 40; i++) {
+  const m = new THREE.Mesh(fallGeo, new THREE.MeshBasicMaterial({ color: Math.random() < 0.5 ? 0x8fae5a : 0xb7b055, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  m.visible = false; m.renderOrder = 13; m.frustumCulled = false; m.userData = { ph: Math.random() * 6, vy: 0.35 + Math.random() * 0.25, spin: (Math.random() - 0.5) * 2.5 };
+  bamboo.add(m); fallLeaves.push(m);
+}
+let spawnAcc = 0;
+function updateFalling(dt, opacity) {
+  if (swayAmt > 0.25) spawnAcc += dt * 7 * swayAmt;
+  while (spawnAcc >= 1) {
+    spawnAcc -= 1;
+    const m = fallLeaves.find((l) => !l.visible); if (!m) break;
+    const st = stalks[Math.floor(Math.random() * stalks.length)], cl = st.userData.clusters[Math.floor(Math.random() * st.userData.clusters.length)];
+    m.position.set(st.position.x + (Math.random() - 0.5) * 1.2, cl.position.y * (0.5 + Math.random() * 0.5), st.position.z + (Math.random() - 0.5) * 1.2);
+    m.visible = true; m.userData.age = 0;
+  }
+  for (const m of fallLeaves) {
+    if (!m.visible) continue;
+    const u = m.userData; u.age += dt;
+    m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.2 + u.ph) * 0.3 * dt; m.position.z += Math.cos(time * 0.9 + u.ph) * 0.25 * dt;
+    m.rotation.z += u.spin * dt; m.rotation.x = Math.sin(time * 1.7 + u.ph) * 0.9;
+    m.material.opacity = 0.75 * opacity * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
+    if (m.position.y < 0.05) m.visible = false;
   }
 }
 
@@ -823,13 +881,14 @@ function startWood() {
   woodSession = { t: 0, next: 0, nextBird: 20 };
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));   // ?skip=60 starts the meditation 60 s in (for testing)
   if (skip > 0) { woodSession.t = skip; while (woodSession.next < TIMELINE.length && TIMELINE[woodSession.next].t < skip) woodSession.next++; woodSession.nextBird = skip + 5; }
-  growth = 0; swayAmt = 0; bamboo.position.copy(rig.position); bamboo.visible = true; updateBamboo(0);
+  faceWorldYaw(VR_YAW);   // turn the rig so that, whichever way you were physically facing, you look toward the pavilion
+  swayAmt = 0; spawnAcc = 0; mistBoost = 1; bamboo.position.copy(rig.position); bamboo.rotation.y = rig.rotation.y; bamboo.visible = true; updateBamboo(0);
   particles.visible = USE_PARTICLES; particleMat.opacity = 0;
   audioInit(); windLevel(0.05, 6); rustleLevel(0.1);
   playReveal(14);
 }
 function endWood() {
-  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; windLevel(0, 3); rustleLevel(0);
+  woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 3); rustleLevel(0);
   revealProgress.value = 0.02; reveal = null;
   setPhase('cards');
 }
@@ -851,18 +910,16 @@ function updateWood(dt) {
   const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (SESSION_END - 24)) / 10));
   const { inhale } = breathAt(s.t);
   const cycle = BREATH_IN + BREATH_OUT;
-  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle, cycleIndex = Math.max(0, Math.floor((s.t - BREATH_START) / cycle));
-  const cycles = Math.floor((SESSION_END - 33 - BREATH_START) / cycle);   // number of breaths in the guided part
+  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
   if (amp > 0.02) {
     ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT;
-    // growth steps up during each in-breath and holds during the out-breath
-    growth = clamp((cycleIndex + (inhale ? smooth01(tc / BREATH_IN) : 1)) / cycles);
     // the leaves sway during the out-breath: a gentle swell that rises and falls
     swayAmt = inhale ? swayAmt * 0.9 : Math.sin(Math.PI * clamp((tc - BREATH_IN) / BREATH_OUT));
     rustleLevel(inhale ? 0.08 : 0.08 + 0.5 * swayAmt);
   } else ringState.mode = 'idle';
   // the bamboo fades in with the reveal and out at the end
-  updateBamboo(smooth01(s.t / 8) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8)));
+  const vis = smooth01(s.t / 10) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8));
+  updateBamboo(vis); updateFalling(dt, vis);
   if (s.t > s.nextBird) { chirp(); if (Math.random() < 0.5) setTimeout(chirp, 700 + Math.random() * 900); s.nextBird = s.t + 7 + Math.random() * 9; }
   if (USE_PARTICLES) {
     const { b } = breathAt(s.t);
@@ -987,7 +1044,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 
 const phCards = $('phCards'), phWood = $('phWood'), phGarden = $('phGarden');
 function setPhase(p) {
-  if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
+  if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
   phase = p;
   applySceneScale();
   reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
@@ -997,6 +1054,7 @@ function setPhase(p) {
   controls.enabled = p === 'garden' && !renderer.xr.isPresenting;
   rig.rotation.y = 0; yaw = 0; pitch = 0;
   if (p === 'cards') {
+    needAlign = 10;   // once the headset has a pose, turn the rig so the middle card is straight ahead
     resetCards();
     scene.background.set(0x0a1112);
     rig.position.set(0, 0, 0); camera.position.set(0, 1.6, 0);
@@ -1031,7 +1089,7 @@ const vrBtn = VRButton.createButton(renderer, { optionalFeatures: ['hand-trackin
 $('vrSlot').appendChild(vrBtn);
 renderer.xr.addEventListener('sessionstart', () => {
   controls.enabled = false;
-  if (phase === 'cards') { rig.position.set(0, 0, 0); rig.rotation.y = 0; if (!welcomed) welcome(); }
+  if (phase === 'cards') { rig.position.set(0, 0, 0); rig.rotation.y = 0; needAlign = 10; if (!welcomed) welcome(); }
 });
 renderer.xr.addEventListener('sessionend', () => { setPhase(phase === 'garden' ? 'garden' : 'cards'); });
 
@@ -1044,7 +1102,7 @@ window.addEventListener('resize', resize);
 resize();
 setPhase('cards');
 // ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
-{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); }   // ?pitch=-1.1 looks down
+{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
 
 let last = performance.now();
 const _cam = new THREE.Vector3();
@@ -1063,6 +1121,7 @@ renderer.setAnimationLoop((now) => {
     if (k >= 1) reveal = null;
   }
   updateNearMist(dt);
+  if (needAlign > 0 && renderer.xr.isPresenting && phase === 'cards' && --needAlign === 0) faceWorldYaw(0);
   if (phase === 'cards') updateCards(dt);
   else if (phase === 'wood') { updateWood(dt); walk(dt); }
   else { walk(dt); controls.update(); }
