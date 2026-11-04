@@ -415,16 +415,18 @@ scan.initialized
 
 /* ---------- picking, teleporting and walking (used in the garden, next steps) ---------- */
 const ray = new THREE.Raycaster();
-const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
+// LIFT raises where you stand in every scene (metres), because standing exactly on the scan's floor put the feet below the ground. ?lift=0.3 in the link tries another value.
+const LIFT = (() => { const v = parseFloat(new URLSearchParams(location.search).get('lift')); return Number.isFinite(v) ? v : 0.2; })();
+const VR_START = new THREE.Vector3(-17.8, -1.0 + LIFT, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
 // Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
 // The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the lantern's world height.
-const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
+const FIRE_START = new THREE.Vector3(-21.5, -0.85 + LIFT, 26.94), FIRE_TARGET = new THREE.Vector3(-19.3, 0.0, 22.8); let FIRE_LANTERN_Y = 1.6;
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the lantern's world height
 const FIRE_YAW = Math.atan2(-(CARD_START.x - FIRE_START.x), -(CARD_START.z - FIRE_START.z));   // like every scene, face the middle of the lake, where the cards were
 // Water: you stand at the lake edge at (-28.8, 5.1) and look across the water toward the garden centre. The scan has no water, so the surface is made here:
 // WATER_DROP metres below your feet (a first guess). ?water=x,y,z moves where you stand, ?waterDrop= lowers or raises the surface.
-const WATER_START = new THREE.Vector3(-28.8, -0.95, 5.1); let WATER_DROP = 0.45;
+const WATER_START = new THREE.Vector3(-28.8, -0.95 + LIFT, 5.1); let WATER_DROP = 0.45 + LIFT;   // the lake surface stays where it was, so it is LIFT further below you
 { const q = new URLSearchParams(location.search).get('water'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) WATER_START.set(x, y, z); } }
 { const d = parseFloat(new URLSearchParams(location.search).get('waterDrop')); if (Number.isFinite(d)) WATER_DROP = d; }
 const WATER_YAW = Math.atan2(-(GARDEN.x - WATER_START.x), -(GARDEN.z - WATER_START.z));
