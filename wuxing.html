@@ -62,6 +62,7 @@ input[type=range] { pointer-events: auto; vertical-align: middle; }
     <div class="seg panel" role="group" aria-label="Preview">
       <button type="button" id="phCards" aria-pressed="true">Cards</button>
       <button type="button" id="phWood" aria-pressed="false">Wood session</button>
+      <button type="button" id="phFire" aria-pressed="false">Fire session</button>
       <button type="button" id="phGarden" aria-pressed="false">Garden (preview)</button>
       <button type="button" id="replay" class="garden-only">Replay reveal</button>
       <button type="button" id="pick" class="garden-only" aria-pressed="false">Pick VR start</button>
@@ -117,7 +118,7 @@ let time = 0;   // seconds since the page opened, used by the animations
    ===================================================================== */
 // A big sphere around the viewer, painted by a small program on the graphics card (a fragment shader).
 // Think of it as a p5.js draw() that runs once for every pixel, using noise() to get drifting mist.
-const mistUniforms = { time: { value: 0 } };
+const mistUniforms = { time: { value: 0 }, dusk: { value: 0 } };
 const RIDGES = true;   // faint layered mountain silhouettes on the horizon; set to false for mist only
 const mist = new THREE.Mesh(
   new THREE.SphereGeometry(60, 48, 32),
@@ -130,6 +131,7 @@ const mist = new THREE.Mesh(
     fragmentShader: /* glsl */ `
       varying vec3 vDir;
       uniform float time;
+      uniform float dusk;
       float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
       float n3(vec3 x) {
         vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -157,6 +159,9 @@ const mist = new THREE.Mesh(
         float m = fbm(q * 1.7 + n * 1.5 + 4.0);
         float mistAmt = smoothstep(0.35, 0.78, m);
         col = mix(col, vec3(0.34, 0.46, 0.45), mistAmt * (0.22 + 0.5 * horizon));
+        // dusk (the Fire scene): everything warmer, with an orange glow low on the horizon and a purple sky above
+        vec3 duskCol = mix(vec3(0.10, 0.05, 0.14), vec3(0.98, 0.50, 0.22), exp(-abs(d.y) * 3.2));
+        col = mix(col, col * vec3(1.5, 0.85, 0.65) + duskCol * 0.55, dusk);
         gl_FragColor = vec4(col, 1.0);
       }
     `,
@@ -318,12 +323,13 @@ scene.add(scan);
 const revealProgress = dyno.dynoFloat(0.02);   // 0 = nothing visible, 1.1 = whole garden
 const revealTime = dyno.dynoFloat(0);
 const revealCX = dyno.dynoFloat(-25), revealCY = dyno.dynoFloat(-13);
+const revealWarm = dyno.dynoFloat(0);   // 0 = the green ink look, 1 = warm dusk colours with deeper reds (Fire)
 scan.objectModifier = dyno.dynoBlock(
   { gsplat: dyno.Gsplat },
   { gsplat: dyno.Gsplat },
   ({ gsplat }) => {
     const d = new dyno.Dyno({
-      inTypes: { gsplat: dyno.Gsplat, progress: 'float', time: 'float', cx: 'float', cy: 'float' },
+      inTypes: { gsplat: dyno.Gsplat, progress: 'float', time: 'float', cx: 'float', cy: 'float', warm: 'float' },
       outTypes: { gsplat: dyno.Gsplat },
       globals: () => [dyno.unindent(/* glsl */ `
         float hash21(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
@@ -349,11 +355,15 @@ scan.objectModifier = dyno.dynoBlock(
         vec3 keep = clamp((mix(vec3(lum), c, 1.5) - 0.5) * 1.1 + 0.5, 0.0, 1.0) * vec3(0.93, 1.03, 0.93);
         float veg = smoothstep(-0.02, 0.08, c.g - max(c.r, c.b));
         float ground = 1.0 - smoothstep(0.6, 2.0, p.z);
-        ${outputs.gsplat}.rgba.rgb = mix(keep, ink, max(veg, ground * 0.85));
+        vec3 outc = mix(keep, ink, max(veg, ground * 0.85));
+        float redness = clamp((c.r - max(c.g, c.b)) * 3.0, 0.0, 1.0);
+        vec3 fireCol = outc * vec3(1.25, 0.82, 0.58) + vec3(0.05, 0.0, -0.02);
+        fireCol = mix(fireCol, vec3(min(c.r * 1.35, 1.0), c.g * 0.65, c.b * 0.5), redness);   // red maples turn a deeper red
+        ${outputs.gsplat}.rgba.rgb = mix(outc, fireCol, ${inputs.warm});
         ${outputs.gsplat}.rgba.a = ${inputs.gsplat}.rgba.a * smoothstep(0.0, 1.2, lead);
       `),
     });
-    gsplat = d.apply({ gsplat, progress: revealProgress, time: revealTime, cx: revealCX, cy: revealCY }).gsplat;
+    gsplat = d.apply({ gsplat, progress: revealProgress, time: revealTime, cx: revealCX, cy: revealCY, warm: revealWarm }).gsplat;
     return { gsplat };
   }
 );
@@ -361,8 +371,8 @@ scan.updateGenerator();
 
 // The reveal needs a centre. World (x, y, z) turns into scan (x, -z) on the ground because the scan is rotated -90 degrees around x.
 let reveal = null;
-function playReveal(seconds = 10) {
-  revealCX.value = VR_START.x; revealCY.value = -VR_START.z;
+function playReveal(seconds = 10, centre = VR_START) {
+  revealCX.value = centre.x; revealCY.value = -centre.z;
   reveal = { t: 0, dur: seconds }; revealProgress.value = 0.02; scan.updateVersion();
 }
 
@@ -374,6 +384,11 @@ scan.initialized
 /* ---------- picking, teleporting and walking (used in the garden, next steps) ---------- */
 const ray = new THREE.Raycaster();
 const VR_START = new THREE.Vector3(-17.8, -1.0, 21.0);   // picked earlier in scan.html: the path at the bottom right
+// Fire: found by looking at where the scan has red pillars and red maples. The long corridor stands at x -37 to -44, z 4 to 17 (world numbers);
+// the red maples are around (-30, 1). Floor height 0. ?fire=x,y,z in the link overrides it.
+const FIRE_START = new THREE.Vector3(-39, 0, 10), FIRE_TARGET = new THREE.Vector3(-30, 0, 0);
+{ const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
+const FIRE_YAW = Math.atan2(-(FIRE_TARGET.x - FIRE_START.x), -(FIRE_TARGET.z - FIRE_START.z));   // face the red maples
 let VR_YAW = Math.atan2(-(GARDEN.x - VR_START.x), -(GARDEN.z - VR_START.z));
 const marker = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf08a4b, depthTest: false }));
 marker.renderOrder = 10; marker.visible = false;
@@ -387,7 +402,8 @@ let SCENE_SCALE = 1.2;   // 1 = the scan at its recorded size
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
-  scan.position.set((1 - SCENE_SCALE) * VR_START.x, (1 - SCENE_SCALE) * VR_START.y, (1 - SCENE_SCALE) * VR_START.z);
+  const pv = phase === 'fire' ? FIRE_START : VR_START;   // the scene grows around the point where you stand
+  scan.position.set((1 - SCENE_SCALE) * pv.x, (1 - SCENE_SCALE) * pv.y, (1 - SCENE_SCALE) * pv.z);
 }
 
 // p is the picked point in the scan's own (unscaled) world numbers, the same kind of numbers as before.
@@ -436,7 +452,7 @@ const rayLine = new THREE.Line(
 );
 const _o = new THREE.Vector3(), _d = new THREE.Vector3(), _q = new THREE.Quaternion();
 function teleportFrom(ctrl) {
-  if (phase !== 'garden' && phase !== 'wood') return;
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire') return;
   ctrl.getWorldPosition(_o); ctrl.getWorldQuaternion(_q); _d.set(0, 0, -1).applyQuaternion(_q);
   ray.set(_o, _d); ray.far = 40;
   const hit = ray.intersectObject(scan)[0];
@@ -453,7 +469,7 @@ const WALK_SPEED = 1.4;
 const _fwd = new THREE.Vector3(), _right = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0), _from = new THREE.Vector3(), _down = new THREE.Vector3(0, -1, 0);
 let groundClock = 0;
 function walk(dt) {
-  if (phase !== 'garden' && phase !== 'wood') return;
+  if (phase !== 'garden' && phase !== 'wood' && phase !== 'fire') return;
   const session = renderer.xr.getSession();
   if (!session) return;
   for (const src of session.inputSources) {
@@ -497,7 +513,7 @@ let mistBoost = 0;       // 1 at the moment you step into the garden, easing to 
 let nearMistLevel = 1;   // eased toward 1 on the cards, 0.35 in the meditation, 0 in the desktop overview
 function updateNearMist(dt) {
   mistBoost = Math.max(0, mistBoost - dt / 18);
-  const goal = phase === 'cards' ? 1 : phase === 'wood' ? 0.35 + 1.1 * mistBoost : 0;
+  const goal = phase === 'cards' ? 1 : (phase === 'wood' || phase === 'fire') ? 0.35 + 1.1 * mistBoost : 0;
   nearMistLevel += (goal - nearMistLevel) * (1 - Math.exp(-dt * 1.5));
   for (const s of nearMist.children) {
     const u = s.userData; u.ang += u.speed * dt * (1 + 3 * mistBoost);
@@ -617,7 +633,7 @@ function updateBody(dt) {
   const headH = Math.max(0.9, _head.y - rig.position.y);
   bodyScale.v = clamp(headH / 1.56, 0.7, 1.35);   // the model's eyes are at about 1.56 m
   // legs: only in the meditation (and in the desktop overview when in VR)
-  body.visible = !!body.userData.legs && (phase === 'wood' || (phase === 'garden' && renderer.xr.isPresenting));
+  body.visible = !!body.userData.legs && (phase === 'wood' || phase === 'fire' || (phase === 'garden' && renderer.xr.isPresenting));
   if (body.visible) {
     if (Math.hypot(_bf.x, _bf.z) > 0.35) { const target = Math.atan2(-_bf.x, -_bf.z); let d = target - bodyYaw; d = Math.atan2(Math.sin(d), Math.cos(d)); bodyYaw += d * (1 - Math.exp(-dt * 6)); }
     body.rotation.y = bodyYaw; body.scale.setScalar(bodyScale.v);
@@ -931,9 +947,9 @@ function updateWood(dt) {
   if (amp > 0.02) {
     ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT;
     // the leaves sway during the out-breath: a gentle swell that rises and falls
-    swayAmt = inhale ? swayAmt * 0.9 : Math.sin(Math.PI * clamp((tc - BREATH_IN) / BREATH_OUT));
+    swayAmt += ((inhale ? 0 : 1) - swayAmt) * (1 - Math.exp(-dt / 1.3));   // eased, so the leaves wind down slowly after each out-breath
     rustleLevel(inhale ? 0.08 : 0.08 + 0.5 * swayAmt);
-  } else ringState.mode = 'idle';
+  } else { ringState.mode = 'idle'; swayAmt += (0 - swayAmt) * (1 - Math.exp(-dt / 1.3)); }
   // the bamboo fades in with the reveal and out at the end
   const vis = smooth01(s.t / 10) * (1 - smooth01((s.t - (SESSION_END - 10)) / 8));
   updateBamboo(vis); updateFalling(dt, vis);
@@ -952,6 +968,178 @@ function updateWood(dt) {
 }
 
 /* =====================================================================
+   FIRE: a warm dusk in the corridor, red maples, a lantern, wind chimes and a quiet crackle
+   ===================================================================== */
+const FIRE_END = 172;
+const FIRE_TIMELINE = [
+  { t: 0,   run: () => bowl(0.55) },
+  { t: 3,   voice: 'fire_intro' },
+  { t: 16,  voice: 'fire_breath' },
+  { t: 30,  voice: 'fire_entrust' },    // "Entrust all your worries, pressure and wandering thoughts to the red maples and the glow before you. ..."
+  { t: 62,  voice: 'fire_focus' },
+  { t: 100, voice: 'fire_release' },
+  { t: 140, voice: 'closing' },
+  { t: 154, run: () => bowl(0.5) },
+];
+let fireSession = null, fireOut = 0;
+const fireGroup = new THREE.Group();
+fireGroup.visible = false; scene.add(fireGroup);
+const fireFade = [];   // [material, full opacity]: everything here fades in and out with the session
+const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; fireFade.push([mat, full]); return mat; };
+const warmGlowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,225,160,1)'); grad.addColorStop(0.25, 'rgba(255,150,70,0.65)'); grad.addColorStop(0.6, 'rgba(240,90,40,0.18)'); grad.addColorStop(1, 'rgba(220,60,30,0)');
+  g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+})();
+
+// The lantern: 2.8 m ahead, 0.9 m to the right, 2.2 m up, hanging from a cord. Positions are relative to where you start, looking toward the maples.
+const lantern = new THREE.Group(); lantern.position.set(0.9, 2.2, -2.8); fireGroup.add(lantern);
+const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
+const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
+const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
+for (const y of [-0.17, 0, 0.17]) { const r = 0.26 * Math.sqrt(1 - (y / 0.34) ** 2); const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.007, 6, 28).rotateX(Math.PI / 2), goldMat); ring.position.y = y; lantern.add(ring); }
+for (const y of [0.36, -0.36]) { const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.05, 14), darkMat); cap.position.y = y; lantern.add(cap); }
+const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 1.4, 4), darkMat); cord.position.y = 0.38 + 0.7; lantern.add(cord);
+const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.025, 0.4, 6), lanternMat); tassel.position.y = -0.6; lantern.add(tassel);
+const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const glowInner = new THREE.Sprite(glowMat); glowInner.scale.set(1.0, 1.0, 1); glowInner.renderOrder = 16; lantern.add(glowInner);
+const glowHalo = new THREE.Sprite(haloMat); glowHalo.scale.set(5, 5, 1); glowHalo.renderOrder = 15; lantern.add(glowHalo);
+// wind chimes hanging under the lantern: a ring and five thin tubes that swing
+const chimes = new THREE.Group(); chimes.position.set(0, -1.0, 0); lantern.add(chimes);
+const chimeRing = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.01, 14), goldMat); chimes.add(chimeRing);
+const chimeTubes = [];
+for (let k = 0; k < 5; k++) {
+  const a = (k / 5) * Math.PI * 2, L = 0.2 + (k % 3) * 0.05, piv = new THREE.Group(); piv.position.set(Math.cos(a) * 0.07, 0, Math.sin(a) * 0.07);
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, L, 6), goldMat); tube.position.y = -L / 2; piv.add(tube); chimes.add(piv); chimeTubes.push(piv);
+}
+// embers rising from the lantern
+const EMB_N = 70, emberPos = new Float32Array(EMB_N * 3), emberCol = new Float32Array(EMB_N * 3), emberVel = new Float32Array(EMB_N * 3), emberLife = new Float32Array(EMB_N).fill(-1);
+for (let i = 0; i < EMB_N; i++) emberPos[i * 3 + 1] = -100;
+const emberGeo = new THREE.BufferGeometry();
+emberGeo.setAttribute('position', new THREE.BufferAttribute(emberPos, 3)); emberGeo.setAttribute('color', new THREE.BufferAttribute(emberCol, 3));
+const emberMat = new THREE.PointsMaterial({ map: warmGlowTex, size: 0.16, vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0 });
+const embers = new THREE.Points(emberGeo, emberMat); embers.frustumCulled = false; fireGroup.add(embers);
+// red maple leaves: a five-pointed star shape, falling slowly and flipping in the air
+const mapleGeo = (() => { const sh = new THREE.Shape(); for (let k = 0; k < 10; k++) { const r = k % 2 ? 0.045 : 0.11, a = k * Math.PI / 5; k ? sh.lineTo(Math.sin(a) * r, Math.cos(a) * r) : sh.moveTo(0, r); } sh.closePath(); return new THREE.ShapeGeometry(sh); })();
+const mapleLeaves = [];
+for (let i = 0; i < 50; i++) {
+  const m = new THREE.Mesh(mapleGeo, new THREE.MeshBasicMaterial({ color: [0xc0301f, 0xd8501f, 0xe27a2a, 0xa82418][i % 4], transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  m.visible = false; m.renderOrder = 13; m.frustumCulled = false; m.userData = { ph: Math.random() * 6, vy: 0.3 + Math.random() * 0.3, spin: (Math.random() - 0.5) * 3 };
+  fireGroup.add(m); mapleLeaves.push(m);
+}
+let mapleAcc = 0, emberAcc = 0, fireVis = 0;
+
+// sounds: wind chimes (a few bell tones with long decays) and a crackle (tiny random pops of filtered noise)
+let crackleGain = null;
+function fireAudioStart() {
+  if (!actx) return;
+  if (!crackleGain) {
+    const len = actx.sampleRate * 2, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = actx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.8;
+    crackleGain = actx.createGain(); crackleGain.gain.value = 0.0001;
+    src.connect(bp).connect(crackleGain).connect(master); src.start();
+  }
+}
+function crackle(vol = 0.14) {
+  if (!crackleGain) return;
+  const t = actx.currentTime, g = crackleGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(vol * (0.3 + Math.random() * 0.7), t); g.exponentialRampToValueAtTime(0.0001, t + 0.012 + Math.random() * 0.03);
+}
+const CHIME_NOTES = [1319, 1568, 1760, 2093, 2349];
+function chime(vol = 0.05) {
+  if (!actx) return;
+  const pan = actx.createStereoPanner(); pan.pan.value = Math.random() * 1.2 - 0.6; pan.connect(master);
+  let t = actx.currentTime + 0.02;
+  for (let i = 0, n = 2 + Math.floor(Math.random() * 4); i < n; i++) {
+    const f = CHIME_NOTES[Math.floor(Math.random() * CHIME_NOTES.length)];
+    [[1, 1], [2.76, 0.35], [5.4, 0.12]].forEach(([r, a], j) => {
+      const o = actx.createOscillator(), g = actx.createGain(); o.type = 'sine'; o.frequency.value = f * r;
+      g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol * a, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 2.4 / (1 + j));
+      o.connect(g).connect(pan); o.start(t); o.stop(t + 2.6);
+    });
+    t += 0.12 + Math.random() * 0.3;
+  }
+}
+
+function startFire() {
+  fireSession = { t: 0, next: 0, nextChime: 6 };
+  const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
+  if (skip > 0) { fireSession.t = skip; while (fireSession.next < FIRE_TIMELINE.length && FIRE_TIMELINE[fireSession.next].t < skip) fireSession.next++; fireSession.nextChime = skip + 3; }
+  faceWorldYaw(FIRE_YAW);
+  fireGroup.position.copy(rig.position); fireGroup.rotation.y = rig.rotation.y; fireGroup.visible = true;
+  fireOut = 0; fireVis = 0; mapleAcc = 0; emberAcc = 0; mistBoost = 1;
+  audioInit(); fireAudioStart(); windLevel(0.03, 6); rustleLevel(0);
+  playReveal(14, FIRE_START);
+}
+function clearFire() {
+  fireSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); fireGroup.visible = false;
+  mapleLeaves.forEach((m) => { m.visible = false; }); emberLife.fill(-1); windLevel(0, 2);
+  if (crackleGain) { crackleGain.gain.cancelScheduledValues(0); crackleGain.gain.setValueAtTime(0.0001, actx.currentTime); }
+  revealProgress.value = 0.02; reveal = null;
+}
+function endFire() { clearFire(); setPhase('cards'); }
+
+function updateFire(dt) {
+  const s = fireSession; if (!s) return;
+  s.t += dt;
+  while (s.next < FIRE_TIMELINE.length && s.t >= FIRE_TIMELINE[s.next].t) { const ev = FIRE_TIMELINE[s.next++]; if (ev.run) ev.run(); if (ev.voice) say(ev.voice); }
+  const amp = smooth01((s.t - BREATH_START) / 6) * (1 - smooth01((s.t - (FIRE_END - 24)) / 10));
+  const { b, inhale } = breathAt(s.t), cycle = BREATH_IN + BREATH_OUT;
+  const tc = (((s.t - BREATH_START) % cycle) + cycle) % cycle;
+  if (amp > 0.02) { ringState.mode = inhale ? 'in' : 'out'; ringState.k = inhale ? tc / BREATH_IN : (tc - BREATH_IN) / BREATH_OUT; } else ringState.mode = 'idle';
+  fireOut += ((amp > 0.02 && !inhale ? 1 : 0) - fireOut) * (1 - Math.exp(-dt / 1.1));   // eased out-breath strength
+  fireVis = smooth01(s.t / 8) * (1 - smooth01((s.t - (FIRE_END - 10)) / 8));
+  for (const [m, full] of fireFade) m.opacity = full * fireVis;
+  // the glow follows the breath: brighter on the in-breath, softer on the out-breath, with a flame-like flicker
+  const flicker = 0.05 * Math.sin(time * 13) + 0.04 * Math.sin(time * 7.3) + 0.03 * Math.sin(time * 21);
+  const glow = clamp(0.55 + 0.45 * b * amp + flicker, 0, 1.1);
+  glowMat.opacity = fireVis * (0.12 + 0.22 * glow); haloMat.opacity = fireVis * (0.1 + 0.25 * glow);
+  lanternMat.color.setRGB(0.62 + 0.38 * Math.min(glow, 1), 0.1 + 0.2 * Math.min(glow, 1), 0.07 + 0.05 * Math.min(glow, 1), THREE.SRGBColorSpace);   // red, glowing toward orange-red
+  lantern.rotation.z = Math.sin(time * 0.9) * 0.025 + fireOut * 0.05 * Math.sin(time * 2.1); lantern.rotation.x = fireOut * 0.04 * Math.cos(time * 1.7);
+  chimeTubes.forEach((p, k) => { p.rotation.z = (0.05 + fireOut * 0.25) * Math.sin(time * (2.4 + k * 0.37) + k); p.rotation.x = (0.05 + fireOut * 0.2) * Math.cos(time * (2.0 + k * 0.29) + k * 2); });
+  // embers: a few all the time, more on the out-breath
+  emberAcc += dt * (3 + 14 * fireOut);
+  while (emberAcc >= 1) {
+    emberAcc -= 1;
+    const i = emberLife.findIndex((l) => l <= 0); if (i < 0) break;
+    emberPos[i * 3] = 0.9 + (Math.random() - 0.5) * 0.25; emberPos[i * 3 + 1] = 2.0; emberPos[i * 3 + 2] = -2.8 + (Math.random() - 0.5) * 0.25;
+    emberVel[i * 3] = (Math.random() - 0.5) * 0.2; emberVel[i * 3 + 1] = 0.3 + Math.random() * 0.5; emberVel[i * 3 + 2] = (Math.random() - 0.5) * 0.2; emberLife[i] = 3 + Math.random() * 3;
+  }
+  for (let i = 0; i < EMB_N; i++) {
+    if (emberLife[i] <= 0) { emberPos[i * 3 + 1] = -100; continue; }
+    emberLife[i] -= dt;
+    emberPos[i * 3] += (emberVel[i * 3] + Math.sin(time * 1.5 + i) * 0.12) * dt; emberPos[i * 3 + 1] += emberVel[i * 3 + 1] * dt; emberPos[i * 3 + 2] += emberVel[i * 3 + 2] * dt;
+    const f = Math.min(1, emberLife[i] / 1.5);
+    emberCol[i * 3] = 1 * f; emberCol[i * 3 + 1] = 0.6 * f; emberCol[i * 3 + 2] = 0.25 * f;
+  }
+  emberGeo.attributes.position.needsUpdate = true; emberGeo.attributes.color.needsUpdate = true; emberMat.opacity = fireVis;
+  // red maple leaves let go and drift down during the out-breath
+  mapleAcc += dt * 8 * fireOut;
+  while (mapleAcc >= 1) {
+    mapleAcc -= 1;
+    const m = mapleLeaves.find((l) => !l.visible); if (!m) break;
+    m.position.set(-4 + Math.random() * 10, 4 + Math.random() * 3, -1.5 - Math.random() * 8); m.visible = true; m.userData.age = 0;
+  }
+  for (const m of mapleLeaves) {
+    if (!m.visible) continue;
+    const u = m.userData; u.age += dt;
+    m.position.y -= u.vy * dt; m.position.x += Math.sin(time * 1.1 + u.ph) * 0.35 * dt; m.position.z += Math.cos(time * 0.8 + u.ph) * 0.2 * dt;
+    m.rotation.z += u.spin * dt; m.rotation.x = Math.sin(time * 1.9 + u.ph) * 1.0;
+    m.material.opacity = 0.85 * fireVis * smooth01(u.age / 0.6) * smooth01((m.position.y - 0.05) / 0.8);
+    if (m.position.y < 0.05) m.visible = false;
+  }
+  // sounds
+  if (Math.random() < dt * 12) crackle();
+  if (s.t > s.nextChime) { chime(); s.nextChime = s.t + 6 + Math.random() * 7; }
+  if (s.t >= FIRE_END) endFire();
+}
+
+/* =====================================================================
    PART 5: choosing a card (pinch in VR, click on a desktop)
    ===================================================================== */
 // In VR a pinch of thumb and forefinger counts as a "select", exactly like pressing a controller trigger,
@@ -967,7 +1155,7 @@ function cardUnder(origin, direction) {
 function chooseCard(card) {
   if (sel || phase !== 'cards' || !card) return;
   audioInit();
-  if (card.userData.id !== 'wood') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
+  if (card.userData.id !== 'wood' && card.userData.id !== 'fire') { capHold = time + 2.4; setCaption('This element is not ready yet.', ''); setTimeout(() => { if (phase === 'cards' && !sel) setCaption('', ''); }, 2200); return; }
   sel = { card, t: 0 };
   setCaption('', '');
 }
@@ -1007,7 +1195,7 @@ function updateCards(dt) {
     c.scale.setScalar(lerp(1, 2.6, e));
     c.position.lerpVectors(c.userData.home, _capTarget.set(c.userData.home.x * 0.25, EYE, c.userData.home.z * 0.25), e);
     c.material.opacity = 1 - smooth01((k - 0.45) / 0.55);
-    if (k >= 1) { sel = null; setPhase('wood'); }
+    if (k >= 1) { const id = c.userData.id; sel = null; setPhase(id); }
   }
 }
 function resetCards() {
@@ -1059,14 +1247,15 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   yaw += e.movementX * 0.004; pitch = clamp(pitch + e.movementY * 0.004, -1.2, 1.2);
 });
 
-const phCards = $('phCards'), phWood = $('phWood'), phGarden = $('phGarden');
+const phCards = $('phCards'), phWood = $('phWood'), phFire = $('phFire'), phGarden = $('phGarden');
 function setPhase(p) {
   if (phase === 'wood' && p !== 'wood' && woodSession) { woodSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', ''); particles.visible = false; bamboo.visible = false; fallLeaves.forEach((l) => { l.visible = false; }); windLevel(0, 2); rustleLevel(0); revealProgress.value = 0.02; reveal = null; }
+  if (phase === 'fire' && p !== 'fire' && fireSession) clearFire();
   phase = p;
   applySceneScale();
   reference.visible = false; personBtn.setAttribute('aria-pressed', 'false');
   mist.visible = p !== 'garden'; cards.visible = p === 'cards'; scan.visible = p !== 'cards';
-  [[phCards, 'cards'], [phWood, 'wood'], [phGarden, 'garden']].forEach(([b, name]) => b.setAttribute('aria-pressed', p === name ? 'true' : 'false'));
+  [[phCards, 'cards'], [phWood, 'wood'], [phFire, 'fire'], [phGarden, 'garden']].forEach(([b, name]) => b.setAttribute('aria-pressed', p === name ? 'true' : 'false'));
   document.querySelectorAll('.garden-only').forEach((b) => { b.style.display = p === 'garden' ? 'inline-block' : 'none'; });
   controls.enabled = p === 'garden' && !renderer.xr.isPresenting;
   rig.rotation.y = 0; yaw = 0; pitch = 0;
@@ -1081,6 +1270,11 @@ function setPhase(p) {
     rig.position.copy(VR_START); rig.rotation.y = VR_YAW; camera.position.set(0, 1.5, 0);
     statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
     startWood();
+  } else if (p === 'fire') {
+    scene.background.set(0x0a1112);
+    rig.position.copy(FIRE_START); rig.rotation.y = FIRE_YAW; camera.position.set(0, 1.5, 0);
+    statusEl.textContent = scanReady ? 'Drag to look around' : 'Loading scan...';
+    startFire();
   } else {
     scene.background.set(0xe7ddc9);
     rig.position.set(0, 0, 0); camera.position.copy(DESK_POS); controls.update();
@@ -1090,6 +1284,7 @@ function setPhase(p) {
 }
 phCards.addEventListener('click', () => setPhase('cards'));
 phWood.addEventListener('click', () => { audioInit(); setPhase('wood'); });
+phFire.addEventListener('click', () => { audioInit(); setPhase('fire'); });
 phGarden.addEventListener('click', () => setPhase('garden'));
 $('replay').addEventListener('click', () => playReveal(10));
 const scaleEl = $('scale');
@@ -1119,13 +1314,16 @@ window.addEventListener('resize', resize);
 resize();
 setPhase('cards');
 // ?phase=wood or ?phase=garden opens straight into that place (handy for testing on a desktop)
-{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
+{ const ph = new URLSearchParams(location.search).get('phase'); if (ph === 'wood' || ph === 'fire' || ph === 'garden') setPhase(ph); const lp = parseFloat(new URLSearchParams(location.search).get('pitch')); if (Number.isFinite(lp)) pitch = clamp(lp, -1.2, 1.2); const ly = parseFloat(new URLSearchParams(location.search).get('yaw')); if (Number.isFinite(ly)) yaw = ly; }   // ?pitch=-1.1 looks down, ?yaw=0.9 turns left
 
 let last = performance.now();
 const _cam = new THREE.Vector3();
 renderer.setAnimationLoop((now) => {
   const dt = Math.min(0.05, (now - last) / 1000); last = now; time += dt;
   mistUniforms.time.value = time;
+  // dusk and warm colours ease in for Fire and out again afterwards
+  mistUniforms.dusk.value += ((phase === 'fire' ? 1 : 0) - mistUniforms.dusk.value) * (1 - Math.exp(-dt * 0.8));
+  { const wg = phase === 'fire' ? 1 : 0, dw = (wg - revealWarm.value) * (1 - Math.exp(-dt * 0.8)); if (Math.abs(dw) > 0.001) { revealWarm.value += dw; scan.updateVersion(); } }
   // the mist sphere follows the viewer so the horizon never gets closer
   camera.getWorldPosition(_cam); mist.position.copy(_cam);
 
@@ -1141,6 +1339,7 @@ renderer.setAnimationLoop((now) => {
   if (needAlign > 0 && renderer.xr.isPresenting && phase === 'cards' && --needAlign === 0) faceWorldYaw(0);
   if (phase === 'cards') updateCards(dt);
   else if (phase === 'wood') { updateWood(dt); walk(dt); }
+  else if (phase === 'fire') { updateFire(dt); walk(dt); }
   else { walk(dt); controls.update(); }
   if (phase !== 'garden') followHead(dt);
   updateBody(dt);
