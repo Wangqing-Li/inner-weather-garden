@@ -455,7 +455,7 @@ scene.add(marker);
 // Scene scale: the scan is shown at SCENE_SCALE times its recorded size, shrunk around the standing point so your feet stay on the ground.
 // (?scale=0.6 in the link, or the slider in the garden preview.)
 let flightPivot = null;   // while you glide to a scene, the point the scene is scaled around moves with you
-let SCENE_SCALE = 1.1;   // 1 = the scan at its recorded size
+let SCENE_SCALE = 0.85;   // 1 = the scan at its recorded size
 { const s = parseFloat(new URLSearchParams(location.search).get('scale')); if (s > 0.1 && s < 3) SCENE_SCALE = s; }
 function applySceneScale() {
   scan.scale.setScalar(SCENE_SCALE);
