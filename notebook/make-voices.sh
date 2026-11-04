@@ -8,7 +8,7 @@ gen welcome_v2 "Welcome to the Wuxing Meridian. Look around, trust your intuitio
 gen go_wood  "The portal opens. Now let us seek the power of Wood."
 gen go_fire  "The portal opens. Now let us seek the power of Fire."
 gen go_water "The portal opens. Now let us seek the power of Water."
-gen arrival "You have arrived. Allow your eyes to explore this space. Notice the details around you. Listen to the gentle sounds of this garden. You are entirely safe. You are entirely present."
+gen arrival "You have arrived. Allow your eyes to explore this space. Notice the details around you. Listen to the gentle sounds of this garden. You are entirely safe and present."
 gen breath_intro "Bring your awareness to your breath. Let us breathe with the rhythm of this space."
 gen g1_wood  "Inhale deeply, watching the bamboo gently sway."
 gen g1_fire  "Inhale deeply, watching the lantern light glow."

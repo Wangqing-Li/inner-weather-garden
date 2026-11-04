@@ -1013,9 +1013,9 @@ function updateFalling(dt, opacity) {
 // The common structure of every element (from the script doc): arrival, the breath introduction, a guide, then simple cues, with 3 seconds between lines.
 // Breathing is 4 s in, 2 s hold, 6 s out. Everything that moves (leaves, lights, rain, birds, chimes) appears when "Bring your awareness to your breath" begins.
 const BREATH_IN = 4, BREATH_HOLD = 2, BREATH_OUT = 6, BREATH_CYCLE = BREATH_IN + BREATH_HOLD + BREATH_OUT;
-const V2_DUR = { arrival: 12.7 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
-const V2_BREATH_AT = 3 + V2_DUR.arrival + 3;                         // the first guided breath: the leaves, lights, rain, birds and the ground ring begin here
-const V2_GUIDE_AT = V2_BREATH_AT;    // the start of the first guided breath; every breath cycle is counted from here
+const V2_DUR = { arrival: 11.3 };                 // lengths of the spoken lines in seconds (assets/audio, made by notebook/make-voices.sh)
+const V2_BREATH_AT = 3 + V2_DUR.arrival - 1.5;                         // the bamboo, lantern, leaves, rain, birds and the ground ring begin to appear here, just before the arrival line ends
+const V2_GUIDE_AT = 3 + V2_DUR.arrival + 3;    // the start of the first guided breath; every breath cycle is counted from here
 let breathStart = V2_GUIDE_AT;
 const V2_CUE_AT = V2_GUIDE_AT + 2 * BREATH_CYCLE, V2_CUES = 6;       // after the guide, "Inhale... hold... exhale..." for 6 cycles
 const V2_END = V2_CUE_AT + V2_CUES * BREATH_CYCLE + 3 + 21;
@@ -1332,7 +1332,7 @@ rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
 const rainMat = new THREE.LineBasicMaterial({ color: 0xcfe3ee, transparent: true, opacity: 0, depthWrite: false });
 const rain = new THREE.LineSegments(rainGeo, rainMat); rain.frustumCulled = false; rain.renderOrder = 12; rain.visible = false; scene.add(rain);
 // sound: the hiss of fine rain (filtered noise) and now and then one soft drop
-let rainGain = null;
+let rainGain = null, lapGain = null, lapDepth = null;
 function waterAudioStart() {
   if (!actx) return;
   if (!rainGain) {
@@ -1343,14 +1343,38 @@ function waterAudioStart() {
     const lp = actx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 7500;
     rainGain = actx.createGain(); rainGain.gain.value = 0.0001;
     src.connect(hp).connect(lp).connect(rainGain).connect(master); src.start();
+    // soft lapping at the water's edge: low rumbling noise that swells and falls about every 6 s
+    const lap = actx.createBufferSource(); lap.buffer = buf; lap.loop = true;
+    const lapLp = actx.createBiquadFilter(); lapLp.type = 'lowpass'; lapLp.frequency.value = 420;
+    lapGain = actx.createGain(); lapGain.gain.value = 0.0001;
+    const lapLfo = actx.createOscillator(); lapLfo.frequency.value = 0.17; lapDepth = actx.createGain(); lapDepth.gain.value = 0;
+    lapLfo.connect(lapDepth).connect(lapGain.gain); lapLfo.start();
+    lap.connect(lapLp).connect(lapGain).connect(master); lap.start();
   }
 }
 function plink(pan = 0, vol = 0.03) {
   if (!actx) return;
-  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(), p = actx.createStereoPanner(), f = 900 + Math.random() * 900;
-  o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * 0.6, t + 0.12);
-  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-  p.pan.value = pan; o.connect(g).connect(p).connect(master); o.start(t); o.stop(t + 0.2);
+  const kind = Math.random(), t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain(), p = actx.createStereoPanner();
+  // three kinds of drop: a bright tick (most), a rounder drop, and now and then a low bloop
+  const f = kind < 0.6 ? 900 + Math.random() * 900 : kind < 0.88 ? 480 + Math.random() * 300 : 190 + Math.random() * 130;
+  const len = kind < 0.6 ? 0.16 : kind < 0.88 ? 0.26 : 0.34, drop = kind < 0.88 ? 0.6 : 0.45;
+  o.type = 'sine'; o.frequency.setValueAtTime(f, t); o.frequency.exponentialRampToValueAtTime(f * drop, t + len * 0.75);
+  g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol * (kind < 0.88 ? 1 : 1.4), t + 0.004); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  p.pan.value = pan; o.connect(g).connect(p).connect(master); o.start(t); o.stop(t + len + 0.05);
+}
+// now and then a fish rises: a short soft splash (a burst of filtered noise) and a low bloop
+function fishSplash() {
+  if (!actx) return;
+  const t = actx.currentTime, pan = actx.createStereoPanner(); pan.pan.value = Math.random() * 1.4 - 0.7; pan.connect(master);
+  const len = Math.floor(actx.sampleRate * 0.3), buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.5);
+  const src = actx.createBufferSource(); src.buffer = buf;
+  const bp = actx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1100; bp.Q.value = 0.8;
+  const g = actx.createGain(); g.gain.value = 0.07;
+  src.connect(bp).connect(g).connect(pan); src.start(t);
+  const o = actx.createOscillator(), og = actx.createGain(); o.type = 'sine'; o.frequency.setValueAtTime(320, t); o.frequency.exponentialRampToValueAtTime(130, t + 0.25);
+  og.gain.setValueAtTime(0.0001, t); og.gain.linearRampToValueAtTime(0.05, t + 0.01); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+  o.connect(og).connect(pan); o.start(t); o.stop(t + 0.35);
 }
 function dropOnWater() {   // a drop somewhere on the water in front of you
   const yaw = rig.rotation.y, a = (Math.random() - 0.5) * 2.2, dist = 1.5 + Math.random() * Math.random() * 14;
@@ -1359,7 +1383,7 @@ function dropOnWater() {   // a drop somewhere on the water in front of you
   if (Math.random() < 0.7) plink(clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) * 0.8, -0.8, 0.8), 0.035 / (1 + dist * 0.15));
 }
 function startWater() {
-  waterSession = { t: 0, next: 0 }; breathStart = V2_GUIDE_AT;
+  waterSession = { t: 0, next: 0, nextSplash: V2_BREATH_AT + 9 }; breathStart = V2_GUIDE_AT;
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
   if (skip > 0) { waterSession.t = skip; while (waterSession.next < WATER_TIMELINE.length && WATER_TIMELINE[waterSession.next].t < skip) waterSession.next++; }
   faceWorldYaw(WATER_YAW);
@@ -1374,6 +1398,7 @@ function clearWater() {
   waterSession = null; ringState.mode = 'idle'; stopVoices(); setCaption('', '');
   waterMesh.visible = false; reflGroup.visible = false; rain.visible = false; windLevel(0, 2);
   if (rainGain) { rainGain.gain.cancelScheduledValues(0); rainGain.gain.setTargetAtTime(0.0001, actx.currentTime, 0.4); }
+  if (lapGain) { lapGain.gain.cancelScheduledValues(0); lapGain.gain.setTargetAtTime(0.0001, actx.currentTime, 0.4); lapDepth.gain.setTargetAtTime(0, actx.currentTime, 0.4); }
   revealProgress.value = 0.02; reveal = null;
 }
 function endWater() { clearWater(); setPhase('cards'); }
@@ -1397,7 +1422,9 @@ function updateWater(dt) {
     rainPos.set([x, yy, z, x + 0.04, yy + 0.3, z], i * 6);
   }
   rainGeo.attributes.position.needsUpdate = true; rainMat.opacity = 0.22 * waterVis;
-  if (rainGain) rainGain.gain.setTargetAtTime(0.09 * waterVis * (0.85 + 0.3 * waterOut), actx.currentTime, 0.5);
+  if (rainGain) rainGain.gain.setTargetAtTime(0.09 * waterVis * (0.85 + 0.3 * waterOut) * (0.92 + 0.08 * Math.sin(time * 0.35)), actx.currentTime, 0.5);   // the rain slowly gets a little heavier and lighter
+  if (lapGain) { lapGain.gain.setTargetAtTime(0.03 * waterVis, actx.currentTime, 0.8); lapDepth.gain.setTargetAtTime(0.02 * waterVis, actx.currentTime, 0.8); }
+  if (waterVis > 0.3 && s.t > s.nextSplash) { fishSplash(); s.nextSplash = s.t + 14 + Math.random() * 16; }
   if (s.t >= WATER_END) endWater();
 }
 
