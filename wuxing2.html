@@ -420,7 +420,7 @@ const LIFT = (() => { const v = parseFloat(new URLSearchParams(location.search).
 const VR_START = new THREE.Vector3(-17.8, -1.0 + LIFT, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
 // Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
 // The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the world height of the top of the lantern's cord.
-const FIRE_START = new THREE.Vector3(-21.5, -0.85 + LIFT, 26.94), FIRE_TARGET = new THREE.Vector3(-20.5, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
+const FIRE_START = new THREE.Vector3(-21.5, -0.85 + LIFT, 26.94), FIRE_TARGET = new THREE.Vector3(-20.4, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the world height of the top of the cord
 const FIRE_YAW = Math.atan2(-(CARD_START.x - FIRE_START.x), -(CARD_START.z - FIRE_START.z));   // like every scene, face the middle of the lake, where the cards were
@@ -1115,7 +1115,7 @@ const warmGlowTex = (() => {
 // The lantern's place in your frame. You now face the middle of the lake (FIRE_YAW), not the pavilion, so the world offset to the pavilion is turned into that frame.
 const _ldx = FIRE_TARGET.x - FIRE_START.x, _ldz = FIRE_TARGET.z - FIRE_START.z;
 const LANTERN_LOCAL = new THREE.Vector2((_ldx * Math.cos(FIRE_YAW) - _ldz * Math.sin(FIRE_YAW)) * SCENE_SCALE, (_ldx * Math.sin(FIRE_YAW) + _ldz * Math.cos(FIRE_YAW)) * SCENE_SCALE);
-const lantern = new THREE.Group(); lantern.position.set(LANTERN_LOCAL.x, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE - 0.98, LANTERN_LOCAL.y);   // 0.98 m: the cord reaches that far above the lantern's middle lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
+const lantern = new THREE.Group(); lantern.position.set(LANTERN_LOCAL.x, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE - 0.98, LANTERN_LOCAL.y); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.98 m: the cord reaches that far above the lantern's middle   // 0.55: the whole lantern with cord and chimes is about 1 m tall
 const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
 const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
 const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
