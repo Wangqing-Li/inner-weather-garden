@@ -420,7 +420,7 @@ const LIFT = (() => { const v = parseFloat(new URLSearchParams(location.search).
 const VR_START = new THREE.Vector3(-17.8, -1.0 + LIFT, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
 // Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
 // The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the world height of the top of the lantern's cord.
-const FIRE_START = new THREE.Vector3(-21.5, -0.85 + LIFT, 26.94), FIRE_TARGET = new THREE.Vector3(-20.5, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
+const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THREE.Vector3(-20.4, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the world height of the top of the cord
 const FIRE_YAW = Math.atan2(-(CARD_START.x - FIRE_START.x), -(CARD_START.z - FIRE_START.z));   // like every scene, face the middle of the lake, where the cards were
@@ -1102,7 +1102,7 @@ let fireSession = null, fireOut = 0;
 const fireGroup = new THREE.Group();
 fireGroup.visible = false; scene.add(fireGroup);
 const fireFade = [];   // [material, full opacity]: everything here fades in and out with the session
-const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; fireFade.push([mat, full]); return mat; };
+const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; mat.depthTest = false; fireFade.push([mat, full]); return mat; };   // depthTest off: the lantern is never hidden behind the leaves and roof of the scan
 const warmGlowTex = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -1115,7 +1115,7 @@ const warmGlowTex = (() => {
 // The lantern's place in your frame. You now face the middle of the lake (FIRE_YAW), not the pavilion, so the world offset to the pavilion is turned into that frame.
 const _ldx = FIRE_TARGET.x - FIRE_START.x, _ldz = FIRE_TARGET.z - FIRE_START.z;
 const LANTERN_LOCAL = new THREE.Vector2((_ldx * Math.cos(FIRE_YAW) - _ldz * Math.sin(FIRE_YAW)) * SCENE_SCALE, (_ldx * Math.sin(FIRE_YAW) + _ldz * Math.cos(FIRE_YAW)) * SCENE_SCALE);
-const lantern = new THREE.Group(); lantern.position.set(LANTERN_LOCAL.x, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE - 0.98, LANTERN_LOCAL.y);   // 0.98 m: the cord reaches that far above the lantern's middle lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.55: the whole lantern with cord and chimes is about 1 m tall
+const lantern = new THREE.Group(); lantern.position.set(LANTERN_LOCAL.x, (FIRE_LANTERN_Y - FIRE_START.y) * SCENE_SCALE - 0.98, LANTERN_LOCAL.y); lantern.scale.setScalar(0.55); fireGroup.add(lantern);   // 0.98 m: the cord reaches that far above the lantern's middle; 0.55: the whole lantern with cord and chimes is about 1 m tall
 const lanternMat = fm(new THREE.MeshBasicMaterial({ color: 0xc8281c, depthWrite: false }), 0.95);
 const lBody = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), lanternMat); lBody.scale.set(0.26, 0.34, 0.26); lantern.add(lBody);
 const goldMat = fm(new THREE.MeshBasicMaterial({ color: 0xe0b050, depthWrite: false }), 0.9), darkMat = fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95);
@@ -1124,8 +1124,8 @@ for (const y of [0.36, -0.36]) { const cap = new THREE.Mesh(new THREE.CylinderGe
 // the cord is 14 short pieces whose opacity falls from full at the lantern to zero at the top, so it dissolves into the air instead of ending in a hard line
 for (let i = 0; i < 14; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 4), fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95 * (1 - (i + 0.5) / 14))); seg.position.y = 0.38 + 0.05 + i * 0.1; lantern.add(seg); }
 const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.025, 0.4, 6), lanternMat); tassel.position.y = -0.6; lantern.add(tassel);
-const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
-const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false });
+const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false });
 const glowInner = new THREE.Sprite(glowMat); glowInner.scale.set(1.0, 1.0, 1); glowInner.renderOrder = 16; lantern.add(glowInner);
 const glowHalo = new THREE.Sprite(haloMat); glowHalo.scale.set(5, 5, 1); glowHalo.renderOrder = 15; lantern.add(glowHalo);
 // wind chimes hanging under the lantern: a ring and five thin tubes that swing
@@ -1181,6 +1181,7 @@ for (let i = 0; i < 90; i++) {
   m.userData = { ph: Math.random() * 6, vy: 0.18 + Math.random() * 0.2, spin: (Math.random() - 0.5) * 1.4, size: 0.16 + Math.random() * 0.3 };   // size 16 to 46 cm
   fireGroup.add(m); mapleLeaves.push(m);
 }
+lantern.traverse((o) => { if (o.isMesh) o.renderOrder = 17; });   window.lantern = lantern; window.fireFade = fireFade;   // for looking at it in the browser console   // drawn after the scan
 let mapleAcc = 0, emberAcc = 0, fireVis = 0;
 
 // sounds: wind chimes (a few bell tones with long decays) and a crackle (tiny random pops of filtered noise)
