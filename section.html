@@ -22,7 +22,7 @@ code { background: rgba(255,255,255,.12); padding: 1px 5px; border-radius: 4px; 
 <div class="panel">
   <div id="status">loading the scan...</div>
   <hr style="border:0;border-top:1px solid rgba(255,255,255,.2)">
-  <div><span class="dot" style="background:#ff5a3c"></span>A, where you stand: x <input id="ax" value="-21.1"> z <input id="az" value="26.6"></div>
+  <div><span class="dot" style="background:#ff5a3c"></span>A, where you stand: x <input id="ax" value="-21.5"> z <input id="az" value="26.94"></div>
   <div><span class="dot" style="background:#ff9a3c"></span>B, the lantern: x <input id="bx" value="-19.3"> z <input id="bz" value="22.8"></div>
   <div>half width of the slice (m) <input id="hw" value="1.0"> <button id="go">Redraw</button></div>
   <hr style="border:0;border-top:1px solid rgba(255,255,255,.2)">
@@ -87,6 +87,8 @@ c.addEventListener('click', (e) => {
   draw();
 });
 $('go').addEventListener('click', draw);
+// the line can be set in the link: section.html?ax=-21.5&az=26.94&bx=-19.3&bz=22.8 (A where you stand, B the lantern)
+{ const q = new URLSearchParams(location.search); for (const id of ['ax', 'az', 'bx', 'bz', 'hw']) if (q.has(id)) $(id).value = q.get(id); }
 load();
 </script>
 </body>
