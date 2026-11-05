@@ -768,9 +768,9 @@ function audioInit() {
   if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
   actx = new (window.AudioContext || window.webkitAudioContext)();
   master = actx.createGain(); master.gain.value = 0.9; master.connect(actx.destination);
-  // the spoken lines go through a gain of 2.2 and a soft limiter, so the voice sits clearly above the wind, rain and chimes without distorting
-  voiceGain = actx.createGain(); voiceGain.gain.value = 2.2;
-  const limiter = actx.createDynamicsCompressor(); limiter.threshold.value = -10; limiter.ratio.value = 8; limiter.attack.value = 0.003; limiter.release.value = 0.25;
+  // the spoken lines go through a gain (3.6 unless ?voice= says otherwise) and a soft limiter, so the voice sits clearly above the wind, rain and chimes without distorting
+  voiceGain = actx.createGain(); voiceGain.gain.value = (() => { const v = parseFloat(new URLSearchParams(location.search).get('voice')); return Number.isFinite(v) ? v : 3.6; })();   // ?voice=5 for louder, ?voice=2 for quieter
+  const limiter = actx.createDynamicsCompressor(); limiter.threshold.value = -6; limiter.ratio.value = 8; limiter.attack.value = 0.003; limiter.release.value = 0.25;
   voiceGain.connect(limiter).connect(master);
   // wind through bamboo: white noise, filtered, with its loudness slowly swelling and fading
   const len = actx.sampleRate * 4, buf = actx.createBuffer(1, len, actx.sampleRate), data = buf.getChannelData(0);
@@ -1039,7 +1039,7 @@ function startWood() {
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));   // ?skip=60 starts the meditation 60 s in (for testing)
   if (skip > 0) { woodSession.t = skip; while (woodSession.next < TIMELINE.length && TIMELINE[woodSession.next].t < skip) woodSession.next++; woodSession.nextBird = skip + 5; }
   faceWorldYaw(VR_YAW);   // turn the rig so that, whichever way you were physically facing, you look toward the pavilion
-  swayAmt = 0; spawnAcc = 0; mistBoost = 1; bamboo.position.copy(rig.position); bamboo.rotation.y = rig.rotation.y; bamboo.visible = true; updateBamboo(0);
+  swayAmt = 0; spawnAcc = 0; mistBoost = 1; bamboo.position.copy(rig.position); bamboo.rotation.y = VR_YAW;   /* the world direction you are turned toward, not the rig's own angle: in VR the rig angle depends on how you were sitting or standing */ bamboo.visible = true; updateBamboo(0);
   particles.visible = USE_PARTICLES; particleMat.opacity = 0;
   audioInit(); windLevel(0.05, 6); rustleLevel(0.1);
   if (!arrivedByFlight) playReveal(14);
@@ -1222,7 +1222,7 @@ function startFire() {
   const skip = parseFloat(new URLSearchParams(location.search).get('skip'));
   if (skip > 0) { fireSession.t = skip; while (fireSession.next < FIRE_TIMELINE.length && FIRE_TIMELINE[fireSession.next].t < skip) fireSession.next++; fireSession.nextChime = Math.max(skip, V2_BREATH_AT) + 3; }
   faceWorldYaw(FIRE_YAW);
-  fireGroup.position.copy(rig.position); fireGroup.rotation.y = rig.rotation.y; fireGroup.visible = true;
+  fireGroup.position.copy(rig.position); fireGroup.rotation.y = FIRE_YAW;   // world-aligned, so the lantern is at the pavilion whichever way the rig happens to be turned in VR fireGroup.visible = true;
   fireOut = 0; fireVis = 0; mapleAcc = 0; emberAcc = 0; mistBoost = 1;
   audioInit(); fireAudioStart(); windLevel(0.03, 6); rustleLevel(0);
   if (!arrivedByFlight) playReveal(14, FIRE_START);
@@ -1377,7 +1377,7 @@ function fishSplash() {
   o.connect(og).connect(pan); o.start(t); o.stop(t + 0.35);
 }
 function dropOnWater() {   // a drop somewhere on the water in front of you
-  const yaw = rig.rotation.y, a = (Math.random() - 0.5) * 2.2, dist = 1.5 + Math.random() * Math.random() * 14;
+  const yaw = WATER_YAW, a = (Math.random() - 0.5) * 2.2, dist = 1.5 + Math.random() * Math.random() * 14;
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw), dx = fx * Math.cos(a) - fz * Math.sin(a), dz = fx * Math.sin(a) + fz * Math.cos(a);
   waterU.uDrops.value[waterNext].set(rig.position.x + dx * dist, rig.position.z + dz * dist, time); waterNext = (waterNext + 1) % WATER_DROPS;
   if (Math.random() < 0.7) plink(clamp((dx * Math.cos(yaw) - dz * Math.sin(yaw)) * 0.8, -0.8, 0.8), 0.035 / (1 + dist * 0.15));
