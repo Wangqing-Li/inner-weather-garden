@@ -1102,7 +1102,7 @@ let fireSession = null, fireOut = 0;
 const fireGroup = new THREE.Group();
 fireGroup.visible = false; scene.add(fireGroup);
 const fireFade = [];   // [material, full opacity]: everything here fades in and out with the session
-const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; mat.depthTest = false; fireFade.push([mat, full]); return mat; };   // depthTest off: the lantern is never hidden behind the leaves and roof of the scan
+const fm = (mat, full) => { mat.transparent = true; mat.opacity = 0; fireFade.push([mat, full]); return mat; };
 const warmGlowTex = (() => {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d'), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -1124,8 +1124,8 @@ for (const y of [0.36, -0.36]) { const cap = new THREE.Mesh(new THREE.CylinderGe
 // the cord is 14 short pieces whose opacity falls from full at the lantern to zero at the top, so it dissolves into the air instead of ending in a hard line
 for (let i = 0; i < 14; i++) { const seg = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.1, 4), fm(new THREE.MeshBasicMaterial({ color: 0x2b1d14, depthWrite: false }), 0.95 * (1 - (i + 0.5) / 14))); seg.position.y = 0.38 + 0.05 + i * 0.1; lantern.add(seg); }
 const tassel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.025, 0.4, 6), lanternMat); tassel.position.y = -0.6; lantern.add(tassel);
-const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false });
-const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false });
+const glowMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+const haloMat = new THREE.SpriteMaterial({ map: warmGlowTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
 const glowInner = new THREE.Sprite(glowMat); glowInner.scale.set(1.0, 1.0, 1); glowInner.renderOrder = 16; lantern.add(glowInner);
 const glowHalo = new THREE.Sprite(haloMat); glowHalo.scale.set(5, 5, 1); glowHalo.renderOrder = 15; lantern.add(glowHalo);
 // wind chimes hanging under the lantern: a ring and five thin tubes that swing
@@ -1181,7 +1181,6 @@ for (let i = 0; i < 90; i++) {
   m.userData = { ph: Math.random() * 6, vy: 0.18 + Math.random() * 0.2, spin: (Math.random() - 0.5) * 1.4, size: 0.16 + Math.random() * 0.3 };   // size 16 to 46 cm
   fireGroup.add(m); mapleLeaves.push(m);
 }
-lantern.traverse((o) => { if (o.isMesh) o.renderOrder = 17; });   window.lantern = lantern; window.fireFade = fireFade;   // for looking at it in the browser console   // drawn after the scan
 let mapleAcc = 0, emberAcc = 0, fireVis = 0;
 
 // sounds: wind chimes (a few bell tones with long decays) and a crackle (tiny random pops of filtered noise)
