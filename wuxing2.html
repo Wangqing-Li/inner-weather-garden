@@ -420,7 +420,7 @@ const LIFT = (() => { const v = parseFloat(new URLSearchParams(location.search).
 const VR_START = new THREE.Vector3(-17.8, -1.0 + LIFT, 21.0);   // the round pavilion floor, back to y = -1.0 (the scan's floor layer there is -1.0 to -1.2)
 // Fire: you stand on the arch bridge at (-21.5, 26.9), the spot picked in section.html and face the lantern hanging from the pavilion at (-19.3, 22.8), about 4.5 m away.
 // The bridge deck there is at y = -0.85 (picked in section.html). ?fire=x,y,z in the link moves where you stand; FIRE_LANTERN_Y is the world height of the top of the lantern's cord.
-const FIRE_START = new THREE.Vector3(-21.5, -0.85, 26.94), FIRE_TARGET = new THREE.Vector3(-20.4, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
+const FIRE_START = new THREE.Vector3(-21.5, -0.85 + LIFT, 26.94), FIRE_TARGET = new THREE.Vector3(-20.4, 0.0, 21.4); let FIRE_LANTERN_Y = 2.34;   // x, z and y picked in section.html; y is the top of the cord, where it meets the pavilion
 { const q = new URLSearchParams(location.search).get('fire'); if (q) { const [x, y, z] = q.split(',').map(Number); if ([x, y, z].every(Number.isFinite)) FIRE_START.set(x, y, z); } }
 { const h = parseFloat(new URLSearchParams(location.search).get('lanternY')); if (Number.isFinite(h)) FIRE_LANTERN_Y = h; }   // ?lanternY= sets the world height of the top of the cord
 const FIRE_YAW = Math.atan2(-(CARD_START.x - FIRE_START.x), -(CARD_START.z - FIRE_START.z));   // like every scene, face the middle of the lake, where the cards were
