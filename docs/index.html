@@ -163,11 +163,14 @@ const CH = { 'docs/01_Design_Iterations.md': '#ch-01', '01_Design_Iterations.md'
   'docs/03_Spatial_Audio_UX.md': '#ch-03', '03_Spatial_Audio_UX.md': '#ch-03' };
 async function load(el) {
   const src = el.dataset.src;
-  try {
-    const r = await fetch(src, { cache: 'no-cache' });
-    if (!r.ok) throw new Error(r.status);
-    el.innerHTML = marked.parse(await r.text());
-  } catch (e) { el.innerHTML = '<p class="ph">Could not load ' + src + '</p>'; return; }
+  // first the file next to this page; if that fails (e.g. the page was opened as a local file), the copy on GitHub Pages
+  const online = 'https://wangqing-li.github.io/inner-weather-garden/' + (src.startsWith('../') ? src.slice(3) : 'docs/' + src);
+  let text = null;
+  for (const url of [src, online]) {
+    try { const r = await fetch(url, { cache: 'no-cache' }); if (r.ok) { text = await r.text(); break; } } catch (e) { /* try the next one */ }
+  }
+  if (text === null) { el.innerHTML = '<p class="ph">Could not load ' + src + '</p>'; return; }
+  el.innerHTML = marked.parse(text);
   if (src.includes('README')) {   // the cover already shows the title and the hero GIF
     el.querySelector('img[src$="hero.gif"]')?.closest('p')?.remove();
   }
