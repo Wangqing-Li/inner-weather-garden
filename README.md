@@ -1,11 +1,11 @@
 # Wuxing Meridian — Five Elements Garden
 
-![The Fire meditation: a lantern glows with your breath](docs/media/hero.gif)
+![The Wood meditation: bamboo sways with your breath](docs/media/wood.gif)
 
 A guided VR meditation inside a Gaussian-splat scan of the China Garden in Zurich. You float over the lake, choose one of the five elements, and breathe with the garden: bamboo sways, a lantern glows, rain rings the pond, all paced to a 4-2-6 breath.
 
 Wood, Fire and Water are playable. Metal and Earth are planned.
-The project began as *Inner Weather Garden*, a garden that mirrored perimenopausal heat and cold, and became a meditation.
+The project began as Inner Weather Garden, a garden that mirrored perimenopausal heat and cold, and became a meditation.
 
 ## Try it
 

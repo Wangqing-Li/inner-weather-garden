@@ -6,6 +6,10 @@ Meditation is not a game: the design holds back. No menus, no text during a sess
 
 ![Top view: where you stand and where the cards are](media/layout.svg)
 
+Heights (y) were picked in a side view of the scan (`section.html`): a thin slice along the line from where you stand to the lantern. For Fire, the bridge deck is at y −0.85 and the lantern's cord meets the pavilion eave at y 2.34.
+
+![Side view along the Fire line: the bridge deck and the eave picked as heights](media/height-section.jpg)
+
 You start floating over the lake in mist; only the glowing cards are visible. A chosen card fills the view with mist, and the scene opens at its own place, always facing the lake centre.
 
 ![Choosing a card](media/cards.gif)
