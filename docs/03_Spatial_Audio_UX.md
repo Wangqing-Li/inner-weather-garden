@@ -38,4 +38,6 @@ Sounds are placed left or right (stereo panning), not in full 3D. A singing bowl
 
 Metal and Earth show at 20% and cannot be chosen yet.
 
-![Leaving a scene](media/leave.gif)
+| What you do | What you see |
+|---|---|
+| ![Palms together for three seconds](media/palms.gif) | ![The white ring fills and the cards return](media/leave.gif) |
